@@ -737,6 +737,21 @@ export async function initializeSettings(): Promise<void> {
       );
     }
 
+    // Sync meeting detection preferences to main process
+    try {
+      const currentState = useSettingsStore.getState();
+      await window.electronAPI.meetingDetectionSetPreferences?.({
+        processDetection: currentState.meetingProcessDetection,
+        audioDetection: currentState.meetingAudioDetection,
+      });
+    } catch (err) {
+      logger.warn(
+        "Failed to sync meeting detection preferences on startup",
+        { error: (err as Error).message },
+        "settings"
+      );
+    }
+
     ensureAgentNameInDictionary();
   }
 
@@ -778,6 +793,21 @@ export async function initializeSettings(): Promise<void> {
 
     if (key === "uiLanguage" && typeof value === "string") {
       void i18n.changeLanguage(value);
+    }
+  });
+
+  // Sync settings pushed from main process (e.g., hotkey changed in control panel)
+  window.electronAPI?.onSettingUpdated?.((data: { key: string; value: unknown }) => {
+    const state = useSettingsStore.getState();
+    if (
+      data.key in state &&
+      typeof (state as unknown as Record<string, unknown>)[data.key] !== "function"
+    ) {
+      localStorage.setItem(
+        data.key,
+        typeof data.value === "string" ? data.value : JSON.stringify(data.value)
+      );
+      useSettingsStore.setState({ [data.key]: data.value });
     }
   });
 }
