@@ -950,13 +950,18 @@ class WindowManager {
 
     WindowPositionUtil.setupAlwaysOnTop(this.notificationWindow);
 
-    if (process.env.NODE_ENV === "development") {
+    const devUrl = DevServerManager.getAppUrl(false);
+    if (devUrl) {
       await DevServerManager.waitForDevServer();
-      await this.notificationWindow.loadURL(
-        `${DevServerManager.DEV_SERVER_URL}?meeting-notification=true`
-      );
+      await this.notificationWindow.loadURL(`${devUrl}?meeting-notification=true`);
     } else {
       const fileInfo = DevServerManager.getAppFilePath(false);
+      if (!fileInfo) {
+        logger.warn("[WindowManager] Cannot show meeting notification: no app file path available");
+        this.notificationWindow.close();
+        this.notificationWindow = null;
+        return;
+      }
       await this.notificationWindow.loadFile(fileInfo.path, {
         query: { ...fileInfo.query, "meeting-notification": "true" },
       });

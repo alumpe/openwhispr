@@ -342,7 +342,7 @@ function initializeDeferredManagers() {
   }
 
   googleCalendarManager.start();
-  meetingDetectionEngine.start();
+  // meetingDetectionEngine.start(); // Disabled: meeting detection popups
 }
 
 app.on("open-url", (event, url) => {
