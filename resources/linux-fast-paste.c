@@ -65,6 +65,14 @@ static void portal_send_paste(PortalData *app)
     GError *err = NULL;
     GVariant *opts;
 
+    /* Wait for the previous window to regain compositor focus after our
+     * Electron window blurred. On GNOME Wayland with Electron 39+, blur()
+     * does not synchronously return focus — the compositor needs time to
+     * re-activate the previous window before Ctrl+V will land there.
+     * Total time from blur() to Ctrl+V: ~80ms (Node delay) + ~80ms (D-Bus) + this sleep.
+     * Empirically, GNOME needs ~500ms total from blur() for focus to settle. */
+    usleep(400000); /* 400ms — combined with ~160ms pre-delay = ~560ms from blur() */
+
     opts = g_variant_new("a{sv}", NULL);
     g_dbus_connection_call_sync(app->conn, PORTAL_BUS, PORTAL_PATH,
         PORTAL_IFACE, "NotifyKeyboardKeycode",

@@ -340,7 +340,9 @@ class ClipboardManager {
       }, 15000); // Portal may show a user dialog, allow more time
 
       proc.on("close", (code) => {
-        if (timedOut) return reject(new Error("linux-fast-paste --portal timed out"));
+        if (timedOut) {
+          return reject(new Error("linux-fast-paste --portal timed out"));
+        }
         clearTimeout(timeoutId);
         if (code === 0) {
           const newToken = stdout.trim();
@@ -1058,10 +1060,127 @@ class ClipboardManager {
         });
 
       if (isWayland) {
-        // On GNOME/KDE Wayland, try portal mode first (RemoteDesktop D-Bus portal).
-        // uinput events are accepted by the kernel but Mutter doesn't reliably
-        // route them to focused native Wayland windows (issue #292).
+        // Paste strategy on Wayland:
+        //
+        // 1. Silent portal (GNOME/KDE only, stored token) — instant, no dialog.
+        //    Only reached if the user already granted RemoteDesktop permission.
+        //
+        // 2. uinput — works on wlroots (Sway/Hyprland) and XWayland-only sessions.
+        //    SKIPPED on GNOME/KDE: Electron 39+ runs as a native Wayland window and
+        //    Mutter/KWin do not route uinput keystrokes to the focused Wayland surface.
+        //    The binary exits 0 (false positive) so we must skip it entirely here.
+        //
+        // 3. XTest/XWayland fallback — works when the target app is an XWayland window.
+        //
+        // 4. Portal with dialog (GNOME/KDE, no stored token) — show the RemoteDesktop
+        //    permission dialog once, save the token for future silent pastes (step 1).
+        //    If user dismisses or denies, give up.
+
+        const hasPortalToken =
+          !!(isGnome || isKde) && linuxFastPaste && !this.portalDenied && !!this._readPortalToken();
+
+        // Step 1: silent portal (stored token only — no dialog)
+        if (hasPortalToken) {
+          try {
+            const portalResult = await this._runPortalPaste(linuxFastPaste, earlyIsTerminal);
+            this.safeLog(
+              "✅ Paste successful using linux-fast-paste --portal (RemoteDesktop, cached token)"
+            );
+            debugLogger.info(
+              "Paste successful",
+              { tool: "linux-fast-paste", method: "portal-cached" },
+              "clipboard"
+            );
+            restoreClipboard();
+            return "portal";
+          } catch (portalError) {
+            if (portalError?.message === "portal-denied") {
+              this.portalDenied = true;
+            }
+            debugLogger.warn(
+              "Cached portal token failed, falling through to uinput",
+              { error: portalError?.message },
+              "clipboard"
+            );
+          }
+        }
+
+        // Step 2: uinput
+        // Skip uinput on GNOME/KDE Wayland — Electron 39+ runs as a native Wayland
+        // window (ozone-platform-hint: auto) and Mutter/KWin do NOT route uinput
+        // keystrokes to the focused Wayland surface. The binary exits 0 (false
+        // positive) but the Ctrl+V never reaches the target app. Portal (step 4) is
+        // the correct path for GNOME/KDE. uinput still works on wlroots compositors
+        // (Sway, Hyprland) and plain XWayland sessions.
+        const skipUinput = isGnome || isKde;
+
+        if (!skipUinput) {
+          const uinputArgs = ["--uinput"];
+          if (earlyIsTerminal) uinputArgs.push("--terminal");
+
+          try {
+            await spawnFastPaste(uinputArgs, "uinput");
+            this.safeLog("✅ Paste successful using native linux-fast-paste (uinput)");
+            debugLogger.info(
+              "Paste successful",
+              { tool: "linux-fast-paste", method: "uinput" },
+              "clipboard"
+            );
+            restoreClipboard();
+            return "uinput";
+          } catch (uinputError) {
+            debugLogger.warn("uinput paste failed", { error: uinputError?.message }, "clipboard");
+          }
+        } else {
+          debugLogger.debug(
+            "Skipping uinput on GNOME/KDE Wayland (Electron 39+ false-positive — using portal instead)",
+            { isGnome, isKde },
+            "clipboard"
+          );
+        }
+
+        // Step 3: XTest/XWayland fallback
+        // Also skipped on GNOME/KDE Wayland: xdotool getactivewindow returns the last
+        // focused XWayland window, not the native Wayland window the user is actually
+        // typing into. The binary exits 0 (false positive — it pasted into an invisible
+        // background XWayland window) while the real target gets nothing.
+        if (xwaylandAvailable && !skipUinput) {
+          const xtestArgs = [];
+          if (targetWindowId) xtestArgs.push("--window", targetWindowId);
+          if (earlyIsTerminal) xtestArgs.push("--terminal");
+
+          try {
+            await spawnFastPaste(xtestArgs, "XTest/XWayland fallback");
+            this.safeLog("✅ Paste successful using native linux-fast-paste (XTest/XWayland)");
+            debugLogger.info(
+              "Paste successful",
+              { tool: "linux-fast-paste", method: "xtest-xwayland" },
+              "clipboard"
+            );
+            restoreClipboard();
+            return "xtest-xwayland";
+          } catch (xtestError) {
+            debugLogger.warn(
+              "XTest/XWayland fallback also failed",
+              { error: xtestError?.message },
+              "clipboard"
+            );
+          }
+        } else if (skipUinput) {
+          debugLogger.debug(
+            "Skipping XTest/XWayland on GNOME/KDE Wayland (false-positive — would paste into background XWayland window)",
+            { isGnome, isKde },
+            "clipboard"
+          );
+        }
+
+        // Step 4: portal with dialog (no stored token — ask user once)
         if ((isGnome || isKde) && linuxFastPaste && !this.portalDenied) {
+          debugLogger.info(
+            "uinput/XTest failed on native Wayland — attempting portal (will show dialog once to grant permission)",
+            {},
+            "clipboard"
+          );
           const MAX_PORTAL_RETRIES = 3;
           for (let attempt = 0; attempt < MAX_PORTAL_RETRIES; attempt++) {
             try {
@@ -1092,7 +1211,7 @@ class ClipboardManager {
                 );
               } else {
                 debugLogger.warn(
-                  "linux-fast-paste --portal failed, falling back to uinput",
+                  "linux-fast-paste --portal failed, falling back to system tools",
                   { error: portalError?.message },
                   "clipboard"
                 );
@@ -1102,50 +1221,7 @@ class ClipboardManager {
           }
         }
 
-        const uinputArgs = ["--uinput"];
-        if (earlyIsTerminal) uinputArgs.push("--terminal");
-
-        try {
-          await spawnFastPaste(uinputArgs, "uinput");
-          this.safeLog("✅ Paste successful using native linux-fast-paste (uinput)");
-          debugLogger.info(
-            "Paste successful",
-            { tool: "linux-fast-paste", method: "uinput" },
-            "clipboard"
-          );
-          restoreClipboard();
-          return "uinput";
-        } catch (uinputError) {
-          debugLogger.warn("uinput paste failed", { error: uinputError?.message }, "clipboard");
-
-          if (xwaylandAvailable) {
-            const xtestArgs = [];
-            if (targetWindowId) xtestArgs.push("--window", targetWindowId);
-            if (earlyIsTerminal) xtestArgs.push("--terminal");
-
-            try {
-              await spawnFastPaste(xtestArgs, "XTest/XWayland fallback");
-              this.safeLog("✅ Paste successful using native linux-fast-paste (XTest/XWayland)");
-              debugLogger.info(
-                "Paste successful",
-                { tool: "linux-fast-paste", method: "xtest-xwayland" },
-                "clipboard"
-              );
-              restoreClipboard();
-              return "xtest-xwayland";
-            } catch (xtestError) {
-              debugLogger.warn(
-                "XTest/XWayland fallback also failed",
-                { error: xtestError?.message },
-                "clipboard"
-              );
-            }
-          }
-
-          this.safeLog(
-            `⚠️ Native linux-fast-paste failed: ${uinputError?.message || uinputError}, falling back to system tools`
-          );
-        }
+        this.safeLog("⚠️ All native Wayland paste methods failed, falling back to system tools");
       } else {
         const xtestArgs = [];
         if (targetWindowId) xtestArgs.push("--window", targetWindowId);
