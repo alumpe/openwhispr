@@ -10,12 +10,12 @@ OpenWhispr is an Electron-based desktop dictation application that uses whisper.
 
 ### Core Technologies
 - **Frontend**: React 19, TypeScript, Tailwind CSS v4, Vite
-- **Desktop Framework**: Electron 39 with context isolation
+- **Desktop Framework**: Electron 41 with context isolation
 - **Database**: better-sqlite3 for local transcription history
 - **UI Components**: shadcn/ui with Radix primitives
 - **Speech Processing**: whisper.cpp + NVIDIA Parakeet (via sherpa-onnx) + OpenAI API
 - **Audio Processing**: FFmpeg (bundled via ffmpeg-static)
-- **Node.js**: 22 LTS (pinned in `.nvmrc` — CI uses Node 22, do NOT regenerate `package-lock.json` with a different major version)
+- **Node.js**: 24 (pinned in `.nvmrc` — CI uses Node 24, do NOT regenerate `package-lock.json` with a different major version)
 
 ### Key Architectural Decisions
 
@@ -28,6 +28,7 @@ OpenWhispr is an Electron-based desktop dictation application that uses whisper.
    - Main Process: Electron main, IPC handlers, database operations
    - Renderer Process: React app with context isolation
    - Preload Script: Secure bridge between processes
+   - ONNX Utility Process: hosts all `onnxruntime-node` inference (text embeddings, speaker embeddings, fbank). Lazy-spawned on first use via `src/helpers/onnxWorkerClient.js` → `src/workers/onnxWorker.js`. Native crashes (e.g., ORT `bad_alloc`) confine to the worker; main process rejects in-flight requests and respawns with backoff. Stopped in `will-quit`.
 
 3. **Audio Pipeline**:
    - MediaRecorder API → Blob → ArrayBuffer → IPC → File → whisper.cpp
@@ -104,14 +105,20 @@ OpenWhispr is an Electron-based desktop dictation application that uses whisper.
 - **whisper.js**: Local whisper.cpp integration and model management
 - **parakeet.js**: NVIDIA Parakeet model management via sherpa-onnx
 - **parakeetServer.js**: sherpa-onnx CLI wrapper for transcription
+- **qdrantManager.js**: Qdrant vector DB sidecar process lifecycle (spawn, health check, shutdown)
+- **localEmbeddings.js**: Local text embedding via ONNX Runtime + all-MiniLM-L6-v2 (384-dim vectors)
+- **vectorIndex.js**: Qdrant collection management — upsert, delete, search, batch reindex
 - **windowConfig.js**: Centralized window configuration
 - **windowManager.js**: Window creation and lifecycle management
+- **cliBridge.js**: Loopback HTTP server on ports 8200–8219, bearer-token auth (token at `~/.openwhispr/cli-bridge.json`), 127.0.0.1-only. Used by the unified CLI to talk to a running desktop app.
+- **postMigrationDetector.js**: Detects users returning from the pre-Gizmo bundle ID via a `.bundle-migrated` sentinel in userData; consumed by `ipcHandlers.js` to drive the `PostMigrationOnboarding` modal
 
 ### React Components (src/components/)
 
 - **App.jsx**: Main dictation interface with recording states
 - **ControlPanel.tsx**: Settings, history, model management UI
 - **OnboardingFlow.tsx**: 8-step first-time setup wizard
+- **PostMigrationOnboarding.tsx**: One-time modal for users returning from the pre-Gizmo bundle ID; reuses `PermissionsSection` to walk through re-granting Microphone, Accessibility, and System Audio. Triggered by `postMigrationDetector.js` (see Helper Modules)
 - **SettingsPage.tsx**: Comprehensive settings interface
 - **WhisperModelPicker.tsx**: Model selection and download UI
 - **ui/**: Reusable UI components (buttons, cards, inputs, etc.)
@@ -133,10 +140,10 @@ OpenWhispr is an Electron-based desktop dictation application that uses whisper.
 ### Services
 
 - **ReasoningService.ts**: AI processing for agent-addressed commands
-  - Detects when user addresses their named agent
-  - Routes to appropriate AI provider (OpenAI/Anthropic/Gemini)
-  - Removes agent name from final output
-  - Supports GPT-5, Claude 4.6 (Opus/Sonnet/Haiku), and Gemini 3.1 Pro / 3 Flash models
+  - Detects when user addresses their named agent and removes the agent name from final output
+  - Provider implementations live in a registry at `src/services/ai/inferenceProviders/index.ts` covering 8 providers (`anthropic`, `enterprise`, `gemini`, `groq`, `lan`, `local`, `openai`, `openwhispr`), each implementing the `InferenceProvider` interface from `types.ts`
+  - Per-scope LLM config: 4 scopes (`dictationCleanup`, `dictationAgent`, `noteFormatting`, `chatIntelligence`) defined in `src/config/inferenceScopes.ts`
+  - `selectResolvedLLMConfig(state, scope)` in `settingsStore.ts` resolves provider/model per scope with fallback chains
 
 ### whisper.cpp Integration
 
@@ -158,8 +165,35 @@ OpenWhispr is an Electron-based desktop dictation application that uses whisper.
 
 - **Available Models**:
   - `parakeet-tdt-0.6b-v3`: Multilingual (25 languages), ~680MB
+  - `parakeet-unified-en-0.6b`: English-only, ~631MB, state-of-the-art EN accuracy (5.91% avg WER on Open ASR Leaderboard)
 
 - **Download URLs**: Models from sherpa-onnx ASR models release on GitHub
+
+### Local Semantic Search (Qdrant + MiniLM)
+
+Always-on offline semantic search that finds notes by meaning, not just keywords. Used by the AI agent's `search_notes` tool. Qdrant starts automatically on app launch; embedding model auto-downloads on first run if missing.
+
+**Architecture**:
+- **Qdrant sidecar**: Rust binary spawned as child process (`qdrantManager.js`), port 6333–6350
+- **Embedding model**: `all-MiniLM-L6-v2` via ONNX Runtime (`localEmbeddings.js`), 384-dim vectors
+- **Vector index**: Qdrant collection management (`vectorIndex.js`), cosine distance
+- **Hybrid search**: FTS5 + Qdrant in parallel → Reciprocal Rank Fusion (K=60) with 0.3 cosine score threshold
+
+**Pipeline**:
+1. App launches → Qdrant binary starts → collection created. Embedding model auto-downloads if missing (~22MB)
+2. Note create/update/delete → SQLite write → background vector upsert/delete via `_asyncVectorUpsert()`/`_asyncVectorDelete()`
+3. Agent searches → `db-semantic-search-notes` IPC → parallel FTS5 + vector search → RRF merge → ranked results
+
+**Search fallback chain** (in `searchNotesTool.ts`): cloud search → local semantic → FTS5 keyword
+
+**Storage**:
+- Qdrant data: `~/.cache/openwhispr/qdrant-data/`
+- Qdrant binary: `resources/bin/qdrant-{platform}-{arch}` (bundled — downloaded during `prebuild` / `predev`)
+- Embedding model: `~/.cache/openwhispr/embedding-models/all-MiniLM-L6-v2/` (auto-downloaded on first launch)
+
+**Dependencies**: `@qdrant/js-client-rest`, `onnxruntime-node`
+
+**Dev setup**: The Qdrant binary downloads automatically via `predev`/`prestart`. The embedding model auto-downloads on first app launch. To manually download: `npm run download:qdrant` and `npm run download:embedding-model`.
 
 ### Build Scripts (scripts/)
 
@@ -169,6 +203,8 @@ OpenWhispr is an Electron-based desktop dictation application that uses whisper.
 - **download-windows-key-listener.js**: Downloads prebuilt Windows key listener binary
 - **download-windows-mic-listener.js**: Downloads prebuilt Windows mic listener binary
 - **download-sherpa-onnx.js**: Downloads sherpa-onnx binaries for Parakeet support
+- **download-qdrant.js**: Downloads Qdrant vector DB binary for local semantic search
+- **download-minilm.js**: Downloads all-MiniLM-L6-v2 ONNX model + tokenizer for local embeddings
 - **build-globe-listener.js**: Compiles macOS Globe key listener from Swift source
 - **build-macos-mic-listener.js**: Compiles macOS mic listener from Swift source
 - **build-windows-key-listener.js**: Compiles Windows key listener (for local development)
@@ -230,9 +266,6 @@ CREATE TABLE transcriptions (
 Settings stored in localStorage with these keys:
 - `whisperModel`: Selected Whisper model
 - `useLocalWhisper`: Boolean for local vs cloud
-- `openaiApiKey`: Encrypted API key
-- `anthropicApiKey`: Encrypted API key
-- `geminiApiKey`: Encrypted API key
 - `language`: Selected language code
 - `agentName`: User's custom agent name
 - `reasoningModel`: Selected AI model for processing
@@ -241,7 +274,9 @@ Settings stored in localStorage with these keys:
 - `hasCompletedOnboarding`: Onboarding completion flag
 - `customDictionary`: JSON array of words/phrases for improved transcription accuracy
 
-Environment variables persisted to `.env` (via `saveAllKeysToEnvFile()`):
+Secret env vars (12 total: 7 BYOK API keys + 5 enterprise cloud creds — see `SECRET_KEYS` in `environment.js`) are encrypted at rest via Electron `safeStorage` and stored as per-key files under `userData/secure-keys/`. They are loaded into `process.env` at startup by `EnvironmentManager.init()`. Renderer reads them via IPC (`get-*-key`) and writes via debounced IPC (`save-*-key`). On Linux without a keyring, secrets fall back to plaintext.
+
+Non-secret env vars persisted to `.env` (via `saveAllKeysToEnvFile()`):
 - `LOCAL_TRANSCRIPTION_PROVIDER`: Transcription engine (`nvidia` for Parakeet)
 - `PARAKEET_MODEL`: Selected Parakeet model name (e.g., `parakeet-tdt-0.6b-v3`)
 
@@ -260,14 +295,18 @@ Environment variables persisted to `.env` (via `saveAllKeysToEnvFile()`):
 - AI processes command and removes agent reference from output
 - Supports multiple AI providers (all models defined in `src/models/modelRegistryData.json`):
   - **OpenAI** (Responses API):
-    - GPT-5.2 (`gpt-5.2`) - Latest flagship reasoning model
+    - GPT-5.5 (`gpt-5.5`) - Latest flagship frontier model, 1M context
+    - GPT-5.2 (`gpt-5.2`) - Strong reasoning model
     - GPT-5 Mini (`gpt-5-mini`) - Fast and cost-efficient
     - GPT-5 Nano (`gpt-5-nano`) - Ultra-fast, low latency
     - GPT-4.1 Series (`gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`) - Strong baseline with 1M context
   - **Anthropic** (Via IPC bridge to avoid CORS):
+    - Claude Opus 4.7 (`claude-opus-4-7`) - Most capable Claude model, 1M context
     - Claude Sonnet 4.6 (`claude-sonnet-4-6`) - Balanced performance
     - Claude Haiku 4.5 (`claude-haiku-4-5`) - Fast with near-frontier intelligence
-    - Claude Opus 4.6 (`claude-opus-4-6`) - Most capable Claude model
+    - Claude Opus 4.6 (`claude-opus-4-6`) - Previous Opus generation, 1M context
+    - Claude Sonnet 4.5 (`claude-sonnet-4-5`) - Previous Sonnet generation
+    - Claude Opus 4.5 (`claude-opus-4-5`) - Earlier Opus model
   - **Google Gemini** (Direct API integration):
     - Gemini 3.1 Pro (`gemini-3.1-pro-preview`) - Most capable Gemini model
     - Gemini 3 Flash (`gemini-3-flash-preview`) - Ultra-fast, high-capability next-gen model
@@ -520,7 +559,8 @@ const { t } = useTranslation();
 2. **New Setting**: Update useSettings.ts and SettingsPage.tsx
 3. **New UI Component**: Follow shadcn/ui patterns in src/components/ui
 4. **New Manager**: Create in src/helpers/, initialize in main.js
-5. **New UI Strings**: Add translation keys to all 9 language files (see i18n section above)
+5. **New UI Strings**: Add translation keys to all 10 language files (see i18n section above)
+6. **New Sidecar Binary**: Add download script in `scripts/`, add to `prebuild*` scripts in package.json, add manager in `src/helpers/`, initialize in `main.js`. Spawn the child with `detached: process.platform !== "win32"` so it has its own process group on Unix. Right after spawn call `sidecarPidFile.write(name, child.pid)` and on `close` call `sidecarPidFile.clear(name)`. Add the binary fragment to `EXPECTED_BINARY_FRAGMENTS` in `sidecarReaper.js`. Register a stop function via `sidecarRegistry.register(name, () => manager.stop())` in `registerSidecars()` — that single registration replaces the old `will-quit` line.
 
 ### Testing Checklist
 
@@ -539,6 +579,9 @@ const { t } = useTranslation();
 - [ ] Verify meeting detection works with event-driven mode (check debug logs for "event-driven")
 - [ ] Test meeting notification suppression during recording
 - [ ] Test post-recording cooldown (notifications shouldn't flash immediately)
+- [ ] Create a note about "quarterly revenue projections", search via agent for "financial forecast" — should match semantically
+- [ ] Verify Qdrant starts on app launch (check debug logs for "qdrant started successfully")
+- [ ] Kill Qdrant process manually — verify FTS5 keyword search still works as fallback
 
 ### Common Issues and Solutions
 
@@ -568,7 +611,7 @@ const { t } = useTranslation();
    - Run `npm run download:whisper-cpp` before packaging (current platform)
    - Use `npm run download:whisper-cpp:all` for multi-platform packaging
    - afterSign.js automatically skips signing when CSC_IDENTITY_AUTO_DISCOVERY=false
-   - **Lockfile**: Always use Node 22 when running `npm install` (matches CI). If your local Node version differs, use `nvm exec 22 npm install`. Running `npm install` with a different major version (e.g. Node 24) will produce an incompatible `package-lock.json` that breaks `npm ci` in CI.
+   - **Lockfile**: Always use Node 24 when running `npm install` (matches CI). If your local Node version differs, use `nvm exec 24 npm install`. Running `npm install` with a different major version will produce an incompatible `package-lock.json` that breaks `npm ci` in CI.
 
 5. **Windows Push-to-Talk Binary**:
    - Prebuilt binary downloaded automatically on Windows during build
@@ -582,6 +625,14 @@ const { t } = useTranslation();
    - Windows: Verify `windows-mic-listener.exe` exists in `resources/bin/` (downloaded during `prebuild:win`)
    - Linux: Verify `pactl` is installed (`pulseaudio-utils` or `pipewire-pulse` package)
    - If event-driven binary is missing, detection falls back to polling automatically
+
+7. **Local Semantic Search Not Working**:
+   - Qdrant binary should be in `resources/bin/qdrant-{platform}-{arch}` (auto-downloaded during `predev`/`prebuild`)
+   - Embedding model should be in `~/.cache/openwhispr/embedding-models/all-MiniLM-L6-v2/model.onnx` (auto-downloaded on first app launch)
+   - Run `npm run download:qdrant` and `npm run download:embedding-model` manually if missing
+   - Check debug logs for "qdrant" entries (port, health check, errors)
+   - If Qdrant fails to start, search still works via FTS5 keyword fallback
+   - Semantic search is only available through the AI agent's `search_notes` tool, not the manual search UI
 
 ### Platform-Specific Notes
 
@@ -650,7 +701,7 @@ const { t } = useTranslation();
 
 ## Security Considerations
 
-- API keys stored in system keychain when possible
+- API keys and enterprise cloud creds (12 secrets total) encrypted at rest via Electron `safeStorage` → OS keychain (Keychain / DPAPI / libsecret), stored as per-key files in `userData/secure-keys/`. Linux without a keyring falls back to plaintext (Electron default). Closed in #629.
 - Context isolation enabled
 - No remote code execution
 - Sanitized file paths

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import {
   Home,
+  MessageSquare,
   NotebookPen,
   BookOpen,
   Upload,
@@ -9,6 +10,7 @@ import {
   Settings,
   HelpCircle,
   UserCircle,
+  UserPlus,
   X,
   Search,
 } from "lucide-react";
@@ -17,10 +19,21 @@ import { useTranslation } from "react-i18next";
 import { cn } from "./lib/utils";
 import SupportDropdown from "./ui/SupportDropdown";
 import { getCachedPlatform } from "../utils/platform";
+import WorkspaceSwitcher from "./WorkspaceSwitcher";
+import InviteTeammateDialog from "./InviteTeammateDialog";
+import CreateWorkspaceDialog from "./CreateWorkspaceDialog";
+import { useWorkspace } from "../hooks/useWorkspace";
+import { WORKSPACES_ENABLED } from "../lib/features";
 
 const platform = getCachedPlatform();
 
-export type ControlPanelView = "home" | "personal-notes" | "dictionary" | "upload" | "integrations";
+export type ControlPanelView =
+  | "home"
+  | "chat"
+  | "personal-notes"
+  | "dictionary"
+  | "upload"
+  | "integrations";
 
 interface ControlPanelSidebarProps {
   activeView: ControlPanelView;
@@ -29,7 +42,6 @@ interface ControlPanelSidebarProps {
   onOpenSearch?: () => void;
   onOpenReferrals?: () => void;
   onUpgrade?: () => void;
-  onUpgradeCheckout?: () => void;
   isOverLimit?: boolean;
   userName?: string | null;
   userEmail?: string | null;
@@ -48,7 +60,6 @@ export default function ControlPanelSidebar({
   onOpenSearch,
   onOpenReferrals,
   onUpgrade,
-  onUpgradeCheckout,
   isOverLimit,
   userName,
   userEmail,
@@ -63,6 +74,9 @@ export default function ControlPanelSidebar({
   const [upgradeDismissed, setUpgradeDismissed] = useState(
     () => localStorage.getItem("upgradeProDismissed") === "true"
   );
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const { active: activeWorkspace } = useWorkspace();
 
   const showLimitBanner = authLoaded && isSignedIn && !isProUser && isOverLimit;
   const showUpgradeBanner =
@@ -78,6 +92,7 @@ export default function ControlPanelSidebar({
     icon: React.ComponentType<{ size?: number; className?: string }>;
   }[] = [
     { id: "home", label: t("sidebar.home"), icon: Home },
+    { id: "chat", label: t("sidebar.chat"), icon: MessageSquare },
     { id: "personal-notes", label: t("sidebar.notes"), icon: NotebookPen },
     { id: "upload", label: t("sidebar.upload"), icon: Upload },
     { id: "dictionary", label: t("sidebar.dictionary"), icon: BookOpen },
@@ -91,11 +106,17 @@ export default function ControlPanelSidebar({
         style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
       />
 
+      {WORKSPACES_ENABLED && isSignedIn && (
+        <div className="px-2 pt-1 pb-1">
+          <WorkspaceSwitcher userName={userName} />
+        </div>
+      )}
+
       {onOpenSearch && (
         <div className="px-2 pt-2 pb-1">
           <button
             onClick={onOpenSearch}
-            className="group flex items-center w-full h-7 px-2.5 rounded-md border border-border/25 dark:border-white/8 bg-foreground/3 dark:bg-white/3 hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors gap-2 outline-none focus-visible:ring-1 focus-visible:ring-primary/30"
+            className="group flex items-center w-full h-7 px-2.5 rounded-md border border-border/70 dark:border-white/25 bg-transparent hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors gap-2 outline-none focus-visible:ring-1 focus-visible:ring-primary/30"
           >
             <Search size={11} className="text-muted-foreground/50 shrink-0" />
             <span className="flex-1 text-[11px] text-left text-muted-foreground/50">
@@ -130,9 +151,6 @@ export default function ControlPanelSidebar({
                   : "hover:bg-foreground/4 dark:hover:bg-white/4 active:bg-foreground/6"
               )}
             >
-              {isActive && (
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-3.5 rounded-r-full bg-primary" />
-              )}
               <Icon
                 size={15}
                 className={cn(
@@ -171,10 +189,10 @@ export default function ControlPanelSidebar({
                 {t("sidebar.limitReachedDescription")}
               </p>
               <button
-                onClick={onUpgradeCheckout}
+                onClick={onUpgrade}
                 className="w-full h-7 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
               >
-                {t("sidebar.upgradeToPro")}
+                {t("sidebar.viewPlans")}
               </button>
             </div>
           </div>
@@ -232,6 +250,24 @@ export default function ControlPanelSidebar({
             />
             <span className="text-xs text-foreground/80 group-hover:text-foreground dark:text-foreground/70 dark:group-hover:text-foreground/85 transition-colors duration-150">
               {t("sidebar.referral")}
+            </span>
+          </button>
+        )}
+
+        {WORKSPACES_ENABLED && isSignedIn && (
+          <button
+            onClick={() => (activeWorkspace ? setInviteOpen(true) : setCreateWorkspaceOpen(true))}
+            aria-label={
+              activeWorkspace ? t("sidebar.inviteTeammate") : t("sidebar.createWorkspace")
+            }
+            className="group flex items-center gap-2.5 w-full h-8 px-2.5 rounded-md text-left outline-none hover:bg-foreground/4 dark:hover:bg-white/4 focus-visible:ring-1 focus-visible:ring-primary/30 transition-colors duration-150"
+          >
+            <UserPlus
+              size={15}
+              className="shrink-0 text-foreground/60 group-hover:text-foreground/75 dark:text-foreground/50 dark:group-hover:text-foreground/65 transition-colors duration-150"
+            />
+            <span className="text-xs text-foreground/80 group-hover:text-foreground dark:text-foreground/70 dark:group-hover:text-foreground/85 transition-colors duration-150">
+              {activeWorkspace ? t("sidebar.inviteTeammate") : t("sidebar.createWorkspace")}
             </span>
           </button>
         )}
@@ -295,6 +331,18 @@ export default function ControlPanelSidebar({
           </div>
         </div>
       </div>
+
+      {WORKSPACES_ENABLED && activeWorkspace && (
+        <InviteTeammateDialog
+          open={inviteOpen}
+          onOpenChange={setInviteOpen}
+          workspaceId={activeWorkspace.id}
+          workspaceName={activeWorkspace.name}
+        />
+      )}
+      {WORKSPACES_ENABLED && (
+        <CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} />
+      )}
     </div>
   );
 }

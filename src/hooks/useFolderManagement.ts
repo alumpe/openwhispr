@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { useToast } from "../components/ui/Toast";
+import { useToast } from "../components/ui/useToast";
 import logger from "../utils/logger";
 import type { FolderItem } from "../types/electron";
 import { findDefaultFolder } from "../components/notes/shared";
+import { syncService } from "../services/SyncService.js";
 import {
   useActiveFolderId,
   setActiveFolderId,
@@ -111,19 +112,27 @@ export function useFolderManagement(): UseFolderManagementReturn {
     return () => {
       isMountedRef.current = false;
     };
-  }, []);
+  }, [loadFolders]);
 
   // Re-initialize notes when active folder changes
   useEffect(() => {
     if (!activeFolderId || isLoading) return;
-    // Skip if folder hasn't changed (e.g., initial load completing)
     if (prevFolderIdRef.current === activeFolderId) return;
     prevFolderIdRef.current = activeFolderId;
     const loadForFolder = async () => {
-      const notes = await initializeNotes(null, 50, activeFolderId);
-      const presetNoteId = getActiveNoteIdValue();
-      if (!presetNoteId || !notes.some((n) => n.id === presetNoteId)) {
-        setActiveNoteId(notes.length > 0 ? notes[0].id : null);
+      try {
+        const notes = await initializeNotes(null, 50, activeFolderId);
+        if (getActiveFolderIdValue() !== activeFolderId) return;
+        const presetNoteId = getActiveNoteIdValue();
+        if (!presetNoteId || !notes.some((n) => n.id === presetNoteId)) {
+          setActiveNoteId(notes.length > 0 ? notes[0].id : null);
+        }
+      } catch (err) {
+        logger.warn(
+          "Failed to load notes for folder",
+          { folderId: activeFolderId, error: (err as Error).message },
+          "notes"
+        );
       }
     };
     loadForFolder();
@@ -155,6 +164,7 @@ export function useFolderManagement(): UseFolderManagementReturn {
     if (result.success && result.folder) {
       await loadFolders();
       setActiveFolderId(result.folder.id);
+      syncService.debouncedPush("folder", result.folder.id);
     } else if (result.error) {
       toast({
         title: t("notes.folders.couldNotCreate"),
@@ -177,6 +187,7 @@ export function useFolderManagement(): UseFolderManagementReturn {
     const result = await window.electronAPI.renameFolder(renamingFolderId, trimmed);
     if (result.success) {
       await loadFolders();
+      syncService.debouncedPush("folder", renamingFolderId);
     } else if (result.error) {
       toast({
         title: t("notes.folders.couldNotRename"),
@@ -192,11 +203,12 @@ export function useFolderManagement(): UseFolderManagementReturn {
     async (folderId: number) => {
       const result = await window.electronAPI.deleteFolder(folderId);
       if (result.success) {
-        const personalFolder = findDefaultFolder(folders);
-        if (activeFolderId === folderId && personalFolder) {
-          setActiveFolderId(personalFolder.id);
+        const items = await loadFolders();
+        if (getActiveFolderIdValue() === folderId) {
+          const personalFolder = findDefaultFolder(items);
+          if (personalFolder) setActiveFolderId(personalFolder.id);
         }
-        await loadFolders();
+        syncService.syncAll().catch(console.error);
       } else if (result.error) {
         toast({
           title: t("notes.folders.couldNotDelete"),
@@ -205,7 +217,7 @@ export function useFolderManagement(): UseFolderManagementReturn {
         });
       }
     },
-    [folders, activeFolderId, loadFolders, toast, t]
+    [loadFolders, toast, t]
   );
 
   return {

@@ -1,15 +1,50 @@
+// KDE/GNOME Wayland: self-relaunch with --ozone-platform=x11 to force XWayland.
+// Chromium picks the display backend before JS runs, so appendSwitch is too late.
+if (
+  process.platform === "linux" &&
+  process.env.XDG_SESSION_TYPE === "wayland" &&
+  !process.argv.includes("--ozone-platform=x11")
+) {
+  const desktop = (process.env.XDG_CURRENT_DESKTOP || "").toLowerCase();
+  if (desktop.includes("kde") || /gnome|ubuntu|unity|cosmic/.test(desktop)) {
+    const { spawn } = require("child_process");
+    spawn(process.execPath, [...process.argv.slice(1), "--ozone-platform=x11"], {
+      stdio: "inherit",
+      detached: true,
+    }).unref();
+    process.exit(0);
+  }
+}
+
 const {
   app,
+  desktopCapturer,
   globalShortcut,
   BrowserWindow,
   dialog,
   ipcMain,
+  net,
   session,
   systemPreferences,
 } = require("electron");
 const path = require("path");
 const http = require("http");
+const tls = require("tls");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
+
+// Extend Node's TLS trust with the OS store so ws and https.get see corporate
+// CAs that Chromium already trusts.
+try {
+  const currentCAs = tls.getCACertificates();
+  const systemCAs = tls.getCACertificates("system");
+  if (systemCAs?.length) {
+    tls.setDefaultCACertificates([...currentCAs, ...systemCAs]);
+  }
+} catch (err) {
+  require("./src/helpers/debugLogger").warn("System CA merge failed; using existing CA list", {
+    error: err?.message,
+  });
+}
 
 const VALID_CHANNELS = new Set(["development", "staging", "production"]);
 const DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL = {
@@ -17,7 +52,7 @@ const DEFAULT_OAUTH_PROTOCOL_BY_CHANNEL = {
   staging: "openwhispr-staging",
   production: "openwhispr",
 };
-const BASE_WINDOWS_APP_ID = "com.herotools.openwispr";
+const BASE_WINDOWS_APP_ID = "com.gizmolabs.openwhispr";
 const DEFAULT_AUTH_BRIDGE_PORT = 5199;
 
 function isElectronBinaryExec() {
@@ -62,6 +97,13 @@ function configureChannelUserDataPath() {
 
 configureChannelUserDataPath();
 
+// Load userData .env (contains DICTATION_KEY, API keys, etc.) early — before
+// hotkey registration, which needs DICTATION_KEY before the renderer loads.
+require("dotenv").config({
+  path: path.join(app.getPath("userData"), ".env"),
+  override: false,
+});
+
 // Fix transparent window flickering on Linux: --enable-transparent-visuals requires
 // the compositor to set up an ARGB visual before any windows are created.
 // --disable-gpu-compositing prevents GPU compositing conflicts with the compositor.
@@ -71,20 +113,11 @@ if (process.platform === "linux") {
   app.commandLine.appendSwitch("disable-gpu-compositing");
 }
 
-if (process.platform === "win32") {
-  app.commandLine.appendSwitch("disable-gpu-compositing");
-}
-
-// Enable native Wayland support: Ozone platform for native rendering.
-// GlobalShortcutsPortal is intentionally omitted — GNOME uses its own
-// D-Bus shortcut manager, and on KDE the portal causes unwanted permission
-// dialogs while XWayland globalShortcut works fine without it.
+// Wayland: packaged builds use the wrapper script (scripts/afterPack.js) to
+// force --ozone-platform=x11 before Electron starts. appendSwitch below is a
+// best-effort fallback for unpackaged dev mode (may not take effect on E39+).
 if (process.platform === "linux" && process.env.XDG_SESSION_TYPE === "wayland") {
-  app.commandLine.appendSwitch("ozone-platform-hint", "auto");
-  app.commandLine.appendSwitch(
-    "enable-features",
-    "UseOzonePlatform,WaylandWindowDecorations"
-  );
+  app.commandLine.appendSwitch("enable-features", "WaylandWindowDecorations");
 }
 
 // Set desktop filename so Wayland compositors can match windows to the .desktop entry.
@@ -120,18 +153,55 @@ function shouldRegisterProtocolWithAppArg() {
   return Boolean(process.defaultApp) || isElectronBinaryExec();
 }
 
+function getDefaultHtmlHandler() {
+  try {
+    const { execFileSync } = require("child_process");
+    return (
+      execFileSync("xdg-mime", ["query", "default", "text/html"], {
+        encoding: "utf8",
+        timeout: 3000,
+      }).trim() || null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function restoreHtmlHandlerIfChanged(original) {
+  try {
+    const { execFileSync } = require("child_process");
+    const current = execFileSync("xdg-mime", ["query", "default", "text/html"], {
+      encoding: "utf8",
+      timeout: 3000,
+    }).trim();
+    if (current && current !== original) {
+      execFileSync("xdg-mime", ["default", original, "text/html"], { timeout: 3000 });
+    }
+  } catch {
+    // xdg-mime unavailable or failed
+  }
+}
+
 // Register custom protocol for OAuth callbacks.
 // In development, always include the app path argument so macOS/Windows/Linux
 // can launch the project app instead of opening bare Electron.
 function registerOpenWhisprProtocol() {
   const protocol = OAUTH_PROTOCOL;
+  const htmlHandler = process.platform === "linux" ? getDefaultHtmlHandler() : null;
 
+  let result;
   if (shouldRegisterProtocolWithAppArg()) {
     const appArg = process.argv[1] ? path.resolve(process.argv[1]) : path.resolve(".");
-    return app.setAsDefaultProtocolClient(protocol, process.execPath, [appArg]);
+    result = app.setAsDefaultProtocolClient(protocol, process.execPath, [appArg]);
+  } else {
+    result = app.setAsDefaultProtocolClient(protocol);
   }
 
-  return app.setAsDefaultProtocolClient(protocol);
+  if (htmlHandler) {
+    restoreHtmlHandlerIfChanged(htmlHandler);
+  }
+
+  return result;
 }
 
 const protocolRegistered = registerOpenWhisprProtocol();
@@ -174,20 +244,28 @@ const DatabaseManager = require("./src/helpers/database");
 const ClipboardManager = require("./src/helpers/clipboard");
 const WhisperManager = require("./src/helpers/whisper");
 const ParakeetManager = require("./src/helpers/parakeet");
+const DiarizationManager = require("./src/helpers/diarization");
 const TrayManager = require("./src/helpers/tray");
 const IPCHandlers = require("./src/helpers/ipcHandlers");
+const CliBridge = require("./src/helpers/cliBridge");
 const UpdateManager = require("./src/updater");
 const GlobeKeyManager = require("./src/helpers/globeKeyManager");
 const DevServerManager = require("./src/helpers/devServerManager");
 const WindowsKeyManager = require("./src/helpers/windowsKeyManager");
+const LinuxKeyManager = require("./src/helpers/linuxKeyManager");
 const TextEditMonitor = require("./src/helpers/textEditMonitor");
 const WhisperCudaManager = require("./src/helpers/whisperCudaManager");
 const GoogleCalendarManager = require("./src/helpers/googleCalendarManager");
 const MeetingProcessDetector = require("./src/helpers/meetingProcessDetector");
 const AudioActivityDetector = require("./src/helpers/audioActivityDetector");
+const AudioTapManager = require("./src/helpers/audioTapManager");
+const LinuxPortalAudioManager = require("./src/helpers/linuxPortalAudioManager");
+const MeetingAecManager = require("./src/helpers/meetingAecManager");
 const MeetingDetectionEngine = require("./src/helpers/meetingDetectionEngine");
 const { i18nMain, changeLanguage } = require("./src/helpers/i18nMain");
 const { ensureYdotool } = require("./src/helpers/ensureYdotool");
+const sidecarRegistry = require("./src/helpers/sidecarRegistry");
+const { reapStaleSidecars } = require("./src/helpers/sidecarReaper");
 
 // Manager instances - initialized after app.whenReady()
 let debugLogger = null;
@@ -198,15 +276,22 @@ let databaseManager = null;
 let clipboardManager = null;
 let whisperManager = null;
 let parakeetManager = null;
+let diarizationManager = null;
 let trayManager = null;
 let updateManager = null;
 let globeKeyManager = null;
 let windowsKeyManager = null;
+let linuxKeyManager = null;
 let textEditMonitor = null;
 let whisperCudaManager = null;
 let googleCalendarManager = null;
 let meetingDetectionEngine = null;
+let audioTapManager = null;
+let linuxPortalAudioManager = null;
+let meetingAecManager = null;
+let qdrantManager = null;
 let ipcHandlers = null;
+let cliBridge = null;
 let globeKeyAlertShown = false;
 let authBridgeServer = null;
 
@@ -269,6 +354,7 @@ function initializeCoreManagers() {
     whisperCudaManager = new WhisperCudaManager();
   }
   parakeetManager = new ParakeetManager();
+  diarizationManager = new DiarizationManager();
   googleCalendarManager = new GoogleCalendarManager(databaseManager, windowManager);
   meetingDetectionEngine = new MeetingDetectionEngine(
     googleCalendarManager,
@@ -279,8 +365,13 @@ function initializeCoreManagers() {
   );
   windowManager.meetingDetectionEngine = meetingDetectionEngine;
   updateManager = new UpdateManager();
+  updateManager.setWindowManager(windowManager);
   windowsKeyManager = new WindowsKeyManager();
+  linuxKeyManager = new LinuxKeyManager();
   textEditMonitor = new TextEditMonitor();
+  audioTapManager = new AudioTapManager();
+  linuxPortalAudioManager = new LinuxPortalAudioManager();
+  meetingAecManager = new MeetingAecManager();
   windowManager.textEditMonitor = textEditMonitor;
 
   // IPC handlers must be registered before window content loads
@@ -290,15 +381,34 @@ function initializeCoreManagers() {
     clipboardManager,
     whisperManager,
     parakeetManager,
+    diarizationManager,
     windowManager,
     updateManager,
     windowsKeyManager,
+    linuxKeyManager,
     textEditMonitor,
     whisperCudaManager,
     googleCalendarManager,
     meetingDetectionEngine,
+    audioTapManager,
+    linuxPortalAudioManager,
+    meetingAecManager,
     getTrayManager: () => trayManager,
+    oauthProtocolRegistered: protocolRegistered,
+    oauthProtocol: OAUTH_PROTOCOL,
   });
+}
+
+function registerSidecars() {
+  if (whisperManager) sidecarRegistry.register("whisper", () => whisperManager.stopServer());
+  if (parakeetManager) sidecarRegistry.register("parakeet", () => parakeetManager.stopServer());
+  if (diarizationManager) {
+    sidecarRegistry.register("diarization", () => diarizationManager.shutdown());
+  }
+  const modelManager = require("./src/helpers/modelManagerBridge").default;
+  sidecarRegistry.register("llama", () => modelManager.stopServer());
+  const onnxWorkerClient = require("./src/helpers/onnxWorkerClient");
+  sidecarRegistry.register("onnx", () => onnxWorkerClient.stop());
 }
 
 // Phase 2: Non-critical setup after windows are visible
@@ -354,7 +464,12 @@ app.on("open-url", (event, url) => {
     return;
   }
 
-  handleOAuthDeepLink(url);
+  if (url.includes("/invitations/")) {
+    handleInvitationDeepLink(url);
+    return;
+  }
+
+  void handleOAuthDeepLink(url);
 
   if (windowManager && isLiveWindow(windowManager.controlPanelWindow)) {
     windowManager.controlPanelWindow.show();
@@ -362,28 +477,124 @@ app.on("open-url", (event, url) => {
   }
 });
 
-// Extract the session verifier from the deep link and navigate the control
-// panel to its app URL with the verifier param so the Neon Auth SDK can
-// read it from window.location.search and complete authentication.
-function navigateControlPanelWithVerifier(verifier) {
-  if (!verifier) return;
+function handleInvitationDeepLink(deepLinkUrl) {
+  try {
+    const match = deepLinkUrl.match(/invitations\/([^/?#]+)/);
+    const token = match?.[1];
+    if (!token) return;
+    if (windowManager && isLiveWindow(windowManager.controlPanelWindow)) {
+      windowManager.controlPanelWindow.show();
+      windowManager.controlPanelWindow.focus();
+      windowManager.controlPanelWindow.webContents.send("workspace-invitation-token", token);
+    } else if (windowManager) {
+      windowManager.createControlPanelWindow();
+      // Defer the send until renderer is ready; main.js relies on `did-finish-load`
+      const win = windowManager.controlPanelWindow;
+      if (win) {
+        win.webContents.once("did-finish-load", () => {
+          win.webContents.send("workspace-invitation-token", token);
+        });
+      }
+    }
+  } catch (error) {
+    console.error("Invitation deep link parse failed:", error);
+  }
+}
+
+function resolveAuthUrl() {
+  const fs = require("fs");
+  const envPath = path.join(__dirname, "src", "dist", "runtime-env.json");
+  let runtimeEnv = {};
+  try {
+    if (fs.existsSync(envPath)) runtimeEnv = JSON.parse(fs.readFileSync(envPath, "utf8"));
+  } catch {}
+  return (
+    process.env.AUTH_URL ||
+    process.env.VITE_AUTH_URL ||
+    runtimeEnv.VITE_AUTH_URL ||
+    "https://auth.openwhispr.com"
+  );
+}
+
+function getOauthCookieName() {
+  return process.env.NODE_ENV === "production"
+    ? "__Secure-openwhispr.session_token"
+    : "openwhispr.session_token";
+}
+
+// Older website builds send the signed cookie value as `?token=`; trade it
+// for the raw session.token the bearer plugin expects.
+async function exchangeSignedTokenForRawBearer(signedToken) {
+  try {
+    const res = await net.fetch(`${resolveAuthUrl()}/api/auth/get-session`, {
+      headers: { Cookie: `${getOauthCookieName()}=${signedToken}` },
+      signal: AbortSignal.timeout(5000),
+      useSessionCookies: false,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.session?.token || null;
+  } catch (err) {
+    if (debugLogger) {
+      debugLogger.warn("Signed-token bearer exchange failed (non-fatal)", {
+        error: err?.message,
+      });
+    }
+    return null;
+  }
+}
+
+// One-time bridge for users upgrading from a build that injected the session
+// cookie into Electron's jar: exchange the existing cookie for a raw bearer
+// token, store it, and remove the cookie. Non-fatal — failures fall through
+// to the normal sign-in flow.
+async function migrateCookieToBearerToken() {
+  const tokenStore = require("./src/helpers/tokenStore");
+  if (tokenStore.get()) return;
+
+  const cookieName = getOauthCookieName();
+  const authUrl = resolveAuthUrl();
+
+  try {
+    const cookies = await session.defaultSession.cookies.get({ url: authUrl, name: cookieName });
+    if (!cookies.length) return;
+
+    const rawToken = await exchangeSignedTokenForRawBearer(cookies[0].value);
+    if (!rawToken) return;
+
+    tokenStore.set(rawToken);
+    await session.defaultSession.cookies.remove(authUrl, cookieName);
+    if (debugLogger) debugLogger.debug("Migrated cookie to bearer token");
+  } catch (err) {
+    if (debugLogger) {
+      debugLogger.warn("Cookie→bearer token migration failed (non-fatal)", {
+        error: err?.message,
+      });
+    }
+  }
+}
+
+// Persist the bearer token and reload the control panel so the renderer's
+// authClient sends `Authorization: Bearer <token>` on its next request.
+async function applySessionTokenAndRefresh(token) {
+  if (!token) return;
   if (!isLiveWindow(windowManager?.controlPanelWindow)) return;
 
-  const appUrl = DevServerManager.getAppUrl(true);
+  const tokenStore = require("./src/helpers/tokenStore");
+  tokenStore.set(token);
 
+  const appUrl = DevServerManager.getAppUrl(true);
   if (appUrl) {
-    const separator = appUrl.includes("?") ? "&" : "?";
-    const urlWithVerifier = `${appUrl}${separator}neon_auth_session_verifier=${encodeURIComponent(verifier)}`;
-    windowManager.controlPanelWindow.loadURL(urlWithVerifier);
+    windowManager.controlPanelWindow.loadURL(appUrl);
   } else {
     const fileInfo = DevServerManager.getAppFilePath(true);
-    if (!fileInfo) return;
-    fileInfo.query.neon_auth_session_verifier = verifier;
-    windowManager.controlPanelWindow.loadFile(fileInfo.path, { query: fileInfo.query });
+    if (fileInfo) {
+      windowManager.controlPanelWindow.loadFile(fileInfo.path, { query: fileInfo.query });
+    }
   }
 
   if (debugLogger) {
-    debugLogger.debug("Navigating control panel with OAuth verifier", {
+    debugLogger.debug("Applied bearer token and reloaded control panel", {
       appChannel: APP_CHANNEL,
       oauthProtocol: OAUTH_PROTOCOL,
     });
@@ -392,12 +603,18 @@ function navigateControlPanelWithVerifier(verifier) {
   windowManager.controlPanelWindow.focus();
 }
 
-function handleOAuthDeepLink(deepLinkUrl) {
+async function handleOAuthDeepLink(deepLinkUrl) {
   try {
     const parsed = new URL(deepLinkUrl);
-    const verifier = parsed.searchParams.get("neon_auth_session_verifier");
-    if (!verifier) return;
-    navigateControlPanelWithVerifier(verifier);
+    const bearerToken = parsed.searchParams.get("bearer_token");
+    if (bearerToken) {
+      void applySessionTokenAndRefresh(bearerToken);
+      return;
+    }
+    const signedToken = parsed.searchParams.get("token");
+    if (!signedToken) return;
+    const rawToken = await exchangeSignedTokenForRawBearer(signedToken);
+    if (rawToken) void applySessionTokenAndRefresh(rawToken);
   } catch (err) {
     if (debugLogger) debugLogger.error("Failed to handle OAuth deep link:", err);
   }
@@ -461,11 +678,11 @@ function startAuthBridgeServer() {
       return;
     }
 
-    let verifier = requestUrl.searchParams.get("neon_auth_session_verifier");
-    if (!verifier && req.method === "POST") {
+    let token = requestUrl.searchParams.get("bearer_token") || requestUrl.searchParams.get("token");
+    if (!token && req.method === "POST") {
       try {
         const body = await parseJsonBody(req);
-        verifier = body?.neon_auth_session_verifier || body?.verifier || null;
+        token = body?.bearer_token || body?.token || null;
       } catch (error) {
         res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
         res.end(error.message || "Invalid request");
@@ -473,13 +690,13 @@ function startAuthBridgeServer() {
       }
     }
 
-    if (!verifier) {
+    if (!token) {
       res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end("Missing neon_auth_session_verifier");
+      res.end("Missing token");
       return;
     }
 
-    navigateControlPanelWithVerifier(verifier);
+    void applySessionTokenAndRefresh(token);
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(
@@ -504,46 +721,43 @@ function startAuthBridgeServer() {
 
 // Main application startup
 async function startApp() {
+  reapStaleSidecars();
+
   // Phase 1: Core managers + IPC handlers before windows
   initializeCoreManagers();
+  await environmentManager.init();
+  registerSidecars();
   startAuthBridgeServer();
 
-  // Electron's file:// sends no Origin header, which Neon Auth rejects.
+  cliBridge = new CliBridge(ipcHandlers);
+  cliBridge.start().catch((err) => {
+    debugLogger.error("CLI bridge failed to start", { error: err.message });
+    cliBridge = null;
+  });
+
+  await migrateCookieToBearerToken();
+
+  // Electron's file:// renderer sends Origin: null, which Better Auth's
+  // trustedOrigins check rejects. Spoof Origin to the request's own URL so
+  // calls to OpenWhispr's auth and API hosts are treated as same-origin.
   session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ["https://*.neon.tech/*"] },
+    {
+      urls: [
+        "https://auth.openwhispr.com/*",
+        "https://api.openwhispr.com/*",
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*",
+      ],
+    },
     (details, callback) => {
       try {
         details.requestHeaders["Origin"] = new URL(details.url).origin;
       } catch {
-        /* malformed URL — leave Origin as-is */
+        // malformed URL — leave Origin as-is
       }
       callback({ requestHeaders: details.requestHeaders });
     }
   );
-
-  // Handle getDisplayMedia() calls from the renderer — auto-select the first
-  // screen source with loopback audio so no system picker dialog is shown.
-  const { desktopCapturer } = require("electron");
-  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
-    try {
-      const sources = await desktopCapturer.getSources({ types: ["screen"] });
-      debugLogger.debug("Display media sources", {
-        count: sources.length,
-        names: sources.map((s) => s.name),
-      });
-      if (!sources.length) {
-        debugLogger.error(
-          "No screen sources available — Screen Recording permission may be denied"
-        );
-        callback({});
-        return;
-      }
-      callback({ video: sources[0], audio: "loopback" });
-    } catch (err) {
-      debugLogger.error("Display media handler error", { error: err.message });
-      callback({});
-    }
-  });
 
   windowManager.setActivationModeCache(environmentManager.getActivationMode());
   windowManager.setFloatingIconAutoHide(environmentManager.getFloatingIconAutoHide());
@@ -607,25 +821,39 @@ async function startApp() {
     }
   }
 
-  ipcMain.on("agent-hotkey-changed", async (_event, hotkey) => {
-    try {
-      if (hotkey) {
-        const result = await hotkeyManager.registerSlot("agent", hotkey, agentHotkeyCallback);
-        if (result.success) {
-          environmentManager.saveAgentKey(hotkey);
-        } else {
-          debugLogger.warn("Failed to update agent hotkey", { hotkey }, "hotkey");
-        }
-      } else {
-        hotkeyManager.unregisterSlot("agent");
-        environmentManager.saveAgentKey("");
+  // Set up meeting mode hotkey
+  const meetingHotkeyCallback = () => {
+    if (hotkeyManager.isInListeningMode()) return;
+    debugLogger.info("Meeting hotkey triggered", {}, "meeting");
+    meetingDetectionEngine?.startManualMeeting();
+  };
+
+  const savedMeetingKey = environmentManager.getMeetingKey?.() || "";
+  if (savedMeetingKey) {
+    const result = await hotkeyManager.registerSlot(
+      "meeting",
+      savedMeetingKey,
+      meetingHotkeyCallback
+    );
+    debugLogger.info(
+      "Meeting hotkey startup registration",
+      { savedMeetingKey, ...result },
+      "meeting"
+    );
+  }
+
+  ipcMain.handle("register-meeting-hotkey", async (_event, hotkey) => {
+    if (hotkey) {
+      const result = await hotkeyManager.registerSlot("meeting", hotkey, meetingHotkeyCallback);
+      if (result.success) {
+        environmentManager.saveMeetingKey(hotkey);
+        return { success: true };
       }
-    } catch (error) {
-      debugLogger.warn(
-        "Failed to update agent hotkey",
-        { error: error instanceof Error ? error.message : String(error), hotkey },
-        "hotkey"
-      );
+      return { success: false, message: result.error };
+    } else {
+      hotkeyManager.unregisterSlot("meeting");
+      environmentManager.saveMeetingKey("");
+      return { success: true };
     }
   });
 
@@ -661,10 +889,65 @@ async function startApp() {
     debugLogger.debug("Parakeet startup init error (non-fatal)", { error: err.message });
   });
 
-  if (process.env.REASONING_PROVIDER === "local" && process.env.LOCAL_REASONING_MODEL) {
+  // TODO: drop legacy REASONING_PROVIDER / LOCAL_REASONING_MODEL fallbacks after 2 releases.
+  const cleanupProvider = process.env.CLEANUP_PROVIDER || process.env.REASONING_PROVIDER;
+  const cleanupLocalModel = process.env.LOCAL_CLEANUP_MODEL || process.env.LOCAL_REASONING_MODEL;
+  if (cleanupProvider === "local" && cleanupLocalModel) {
     const modelManager = require("./src/helpers/modelManagerBridge").default;
-    modelManager.prewarmServer(process.env.LOCAL_REASONING_MODEL).catch((err) => {
+    modelManager.prewarmServer(cleanupLocalModel).catch((err) => {
       debugLogger.debug("llama-server pre-warm error (non-fatal)", { error: err.message });
+    });
+  }
+
+  if (
+    process.env.DICTATION_AGENT_PROVIDER === "local" &&
+    process.env.LOCAL_DICTATION_AGENT_MODEL &&
+    process.env.LOCAL_DICTATION_AGENT_MODEL !== cleanupLocalModel
+  ) {
+    const modelManager = require("./src/helpers/modelManagerBridge").default;
+    modelManager.prewarmServer(process.env.LOCAL_DICTATION_AGENT_MODEL).catch((err) => {
+      debugLogger.debug("dictation-agent llama-server pre-warm error (non-fatal)", {
+        error: err.message,
+      });
+    });
+  }
+
+  // Auto-download diarization models if binary is available
+  if (
+    diarizationManager.getBinaryPath() &&
+    (!diarizationManager.isModelDownloaded() || !diarizationManager.isVadModelDownloaded())
+  ) {
+    diarizationManager.downloadModels().catch((err) => {
+      debugLogger.debug("Diarization model auto-download error (non-fatal)", {
+        error: err.message,
+      });
+    });
+  }
+
+  const QdrantManager = require("./src/helpers/qdrantManager");
+  qdrantManager = new QdrantManager();
+  sidecarRegistry.register("qdrant", () => qdrantManager.stop());
+  if (qdrantManager.isAvailable()) {
+    qdrantManager
+      .start()
+      .then(() => {
+        if (qdrantManager.isReady()) {
+          const vectorIndex = require("./src/helpers/vectorIndex");
+          vectorIndex.init(qdrantManager.getPort());
+          vectorIndex.ensureCollection().catch((err) => {
+            debugLogger.debug("Qdrant collection setup error (non-fatal)", { error: err.message });
+          });
+        }
+      })
+      .catch((err) => {
+        debugLogger.debug("Qdrant startup error (non-fatal)", { error: err.message });
+      });
+  }
+
+  const localEmbeddings = require("./src/helpers/localEmbeddings");
+  if (!localEmbeddings.isAvailable()) {
+    localEmbeddings.downloadModel().catch((err) => {
+      debugLogger.debug("Embedding model download error (non-fatal)", { error: err.message });
     });
   }
 
@@ -682,7 +965,7 @@ async function startApp() {
   updateManager.checkForUpdatesOnStartup();
 
   if (process.platform === "darwin") {
-    const { isGlobeLikeHotkey } = require("./src/helpers/hotkeyManager");
+    const { isGlobeLikeHotkey, isMouseButtonHotkey } = require("./src/helpers/hotkeyManager");
     let globeKeyDownTime = 0;
     let globeKeyIsRecording = false;
     let globeLastStopTime = 0;
@@ -842,18 +1125,97 @@ async function startApp() {
       }
     });
 
+    const syncSuppressedMouseButtons = () => {
+      const buttons = [];
+      const currentHotkey = hotkeyManager.getCurrentHotkey && hotkeyManager.getCurrentHotkey();
+      if (isMouseButtonHotkey(currentHotkey)) buttons.push(currentHotkey);
+
+      const agentHotkey = hotkeyManager.getSlotHotkey("agent");
+      if (isMouseButtonHotkey(agentHotkey)) buttons.push(agentHotkey);
+
+      globeKeyManager.setSuppressedMouseButtons(buttons);
+    };
+
+    // Mouse Button 4/5 handling (e.g., Logitech MX Master side buttons)
+    let mouseButtonDownTime = 0;
+    let mouseButtonIsRecording = false;
+    let mouseButtonLastStopTime = 0;
+
+    globeKeyManager.on("mouse-button-down", async (button) => {
+      if (hotkeyManager.isInListeningMode && hotkeyManager.isInListeningMode()) return;
+      if (!isMouseButtonHotkey(button)) return;
+
+      const currentHotkey = hotkeyManager.getCurrentHotkey && hotkeyManager.getCurrentHotkey();
+      const agentHotkey = hotkeyManager.getSlotHotkey("agent");
+
+      if (agentHotkey === button) {
+        windowManager.toggleAgentOverlay();
+      }
+
+      if (currentHotkey !== button) return;
+      if (!isLiveWindow(windowManager.mainWindow)) return;
+
+      const activationMode = windowManager.getActivationMode();
+      if (textEditMonitor) textEditMonitor.captureTargetPid();
+
+      if (activationMode === "push") {
+        const now = Date.now();
+        if (now - mouseButtonLastStopTime < POST_STOP_COOLDOWN_MS) return;
+        windowManager.showDictationPanel();
+        const pressTime = now;
+        mouseButtonDownTime = pressTime;
+        mouseButtonIsRecording = false;
+        setTimeout(() => {
+          if (mouseButtonDownTime === pressTime && !mouseButtonIsRecording) {
+            mouseButtonIsRecording = true;
+            windowManager.sendStartDictation();
+          }
+        }, MIN_HOLD_DURATION_MS);
+      } else {
+        windowManager.sendToggleDictation();
+      }
+    });
+
+    globeKeyManager.on("mouse-button-up", async (button) => {
+      if (hotkeyManager.isInListeningMode && hotkeyManager.isInListeningMode()) return;
+      if (!isMouseButtonHotkey(button)) return;
+
+      const currentHotkey = hotkeyManager.getCurrentHotkey && hotkeyManager.getCurrentHotkey();
+      if (currentHotkey !== button) return;
+      if (!isLiveWindow(windowManager.mainWindow)) return;
+
+      const activationMode = windowManager.getActivationMode();
+      if (activationMode === "push") {
+        mouseButtonDownTime = 0;
+        mouseButtonLastStopTime = Date.now();
+        if (mouseButtonIsRecording) {
+          mouseButtonIsRecording = false;
+          windowManager.sendStopDictation();
+        } else {
+          windowManager.hideDictationPanel();
+        }
+      }
+    });
+
+    syncSuppressedMouseButtons();
     globeKeyManager.start();
+    hotkeyManager.once("hotkey-loaded", syncSuppressedMouseButtons);
+
+    ipcMain.on("hotkey-listening-mode-changed", (_event, enabled) => {
+      if (enabled) {
+        globeKeyManager.setSuppressedMouseButtons([]);
+      } else {
+        syncSuppressedMouseButtons();
+      }
+    });
 
     // After starting globe-listener, check if accessibility is granted.
-    // If not, notify both windows so they can prompt the user.
+    // If not, notify the control panel so it can prompt the user.
     const checkAndNotifyAccessibility = () => {
       if (!systemPreferences.isTrustedAccessibilityClient(false)) {
         debugLogger.info("[Accessibility] macOS accessibility not trusted — notifying renderers");
         if (isLiveWindow(windowManager.controlPanelWindow)) {
           windowManager.controlPanelWindow.webContents.send("accessibility-missing");
-        }
-        if (isLiveWindow(windowManager.mainWindow)) {
-          windowManager.mainWindow.webContents.send("accessibility-missing");
         }
       }
     };
@@ -879,10 +1241,13 @@ async function startApp() {
       rightModDownTime = 0;
       rightModIsRecording = false;
       rightModLastStopTime = 0;
+      mouseButtonDownTime = 0;
+      mouseButtonIsRecording = false;
+      mouseButtonLastStopTime = 0;
+      syncSuppressedMouseButtons();
     });
   }
 
-  // Set up Windows Push-to-Talk handling
   if (process.platform === "win32") {
     debugLogger.debug("[Push-to-Talk] Windows Push-to-Talk setup starting");
 
@@ -913,11 +1278,13 @@ async function startApp() {
     });
 
     windowsKeyManager.on("key-up", () => {
-      if (!isLiveWindow(windowManager.mainWindow)) return;
-
-      const activationMode = windowManager.getActivationMode();
-      if (activationMode === "push") {
+      if (windowManager.winPushState?.active) {
         windowManager.handleWindowsPushKeyUp();
+      } else if (isLiveWindow(windowManager.mainWindow)) {
+        const activationMode = windowManager.getActivationMode();
+        if (activationMode === "push") {
+          windowManager.handleWindowsPushKeyUp();
+        }
       }
     });
 
@@ -980,6 +1347,101 @@ async function startApp() {
       }
     });
   }
+
+  if (process.platform === "linux") {
+    debugLogger.debug("[Push-to-Talk] Linux Push-to-Talk setup starting");
+
+    const {
+      isGlobeLikeHotkey: isGlobeLike,
+      isModifierOnlyHotkey,
+    } = require("./src/helpers/hotkeyManager");
+    const isValidHotkey = (hotkey) => hotkey && !isGlobeLike(hotkey);
+
+    const isRightSideMod = (hotkey) =>
+      /^Right(Control|Ctrl|Alt|Option|Shift|Super|Win|Meta|Command|Cmd)$/i.test(hotkey);
+
+    const needsNativeListener = (hotkey, mode) => {
+      if (!isValidHotkey(hotkey)) return false;
+      if (mode === "push") return true;
+      return isRightSideMod(hotkey) || isModifierOnlyHotkey(hotkey);
+    };
+
+    linuxKeyManager.on("key-down", (_key) => {
+      if (!isLiveWindow(windowManager.mainWindow)) return;
+
+      const activationMode = windowManager.getActivationMode();
+      if (activationMode === "push") {
+        windowManager.startWindowsPushToTalk();
+      } else if (activationMode === "tap") {
+        windowManager.sendToggleDictation();
+      }
+    });
+
+    linuxKeyManager.on("key-up", () => {
+      if (!isLiveWindow(windowManager.mainWindow)) return;
+
+      const activationMode = windowManager.getActivationMode();
+      if (activationMode === "push") {
+        windowManager.handleWindowsPushKeyUp();
+      }
+    });
+
+    linuxKeyManager.on("permission-denied", () => {
+      debugLogger.warn(
+        "[Push-to-Talk] Linux key listener has no permission to access input devices"
+      );
+      if (isLiveWindow(windowManager.mainWindow)) {
+        windowManager.mainWindow.webContents.send("linux-ptt-permission-denied");
+      }
+    });
+
+    linuxKeyManager.on("error", (error) => {
+      debugLogger.warn("[Push-to-Talk] Linux key listener error", { error: error.message });
+    });
+
+    linuxKeyManager.on("unavailable", () => {
+      debugLogger.debug(
+        "[Push-to-Talk] Linux key listener not available - falling back to toggle mode"
+      );
+    });
+
+    linuxKeyManager.on("ready", () => {
+      debugLogger.debug("[Push-to-Talk] LinuxKeyManager is ready and listening");
+    });
+
+    const startLinuxKeyListener = () => {
+      if (!isLiveWindow(windowManager.mainWindow)) return;
+      const activationMode = windowManager.getActivationMode();
+      const currentHotkey = hotkeyManager.getCurrentHotkey();
+
+      if (needsNativeListener(currentHotkey, activationMode)) {
+        linuxKeyManager.start(currentHotkey);
+      }
+    };
+
+    const STARTUP_DELAY_MS = 3000;
+    setTimeout(startLinuxKeyListener, STARTUP_DELAY_MS);
+
+    ipcMain.on("activation-mode-changed", (_event, mode) => {
+      windowManager.resetWindowsPushState();
+      const currentHotkey = hotkeyManager.getCurrentHotkey();
+      if (needsNativeListener(currentHotkey, mode)) {
+        linuxKeyManager.start(currentHotkey);
+      } else {
+        linuxKeyManager.stop();
+      }
+    });
+
+    ipcMain.on("hotkey-changed", (_event, hotkey) => {
+      if (!isLiveWindow(windowManager.mainWindow)) return;
+      windowManager.resetWindowsPushState();
+      const activationMode = windowManager.getActivationMode();
+      linuxKeyManager.stop();
+      if (needsNativeListener(hotkey, activationMode)) {
+        linuxKeyManager.start(hotkey);
+      }
+    });
+  }
 }
 
 // Listen for usage limit reached from dictation overlay, forward to control panel
@@ -1021,8 +1483,10 @@ if (gotSingleInstanceLock) {
     if (url) {
       if (url.includes("upgrade-success")) {
         handleUpgradeDeepLink();
+      } else if (url.includes("/invitations/")) {
+        handleInvitationDeepLink(url);
       } else {
-        handleOAuthDeepLink(url);
+        void handleOAuthDeepLink(url);
       }
     }
   });
@@ -1037,6 +1501,14 @@ if (gotSingleInstanceLock) {
       return new Promise((resolve) => setTimeout(resolve, delay));
     })
     .then(() => {
+      if (process.platform === "win32") {
+        session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+          desktopCapturer.getSources({ types: ["screen"] }).then((sources) => {
+            callback({ video: sources[0], audio: "loopback" });
+          });
+        });
+      }
+
       startApp().catch((error) => {
         console.error("Failed to start app:", error);
         dialog.showErrorBox(
@@ -1100,50 +1572,45 @@ if (gotSingleInstanceLock) {
     }
   });
 
-  app.on("will-quit", () => {
-    if (authBridgeServer) {
-      authBridgeServer.close();
-      authBridgeServer = null;
-    }
-    if (windowManager && isLiveWindow(windowManager.agentWindow)) {
-      windowManager.agentWindow.destroy();
-    }
-    if (hotkeyManager) {
-      hotkeyManager.unregisterAll();
-    } else {
-      globalShortcut.unregisterAll();
-    }
-    if (globeKeyManager) {
-      globeKeyManager.stop();
-    }
-    if (windowsKeyManager) {
-      windowsKeyManager.stop();
-    }
-    if (meetingDetectionEngine) {
-      meetingDetectionEngine.stop();
-    }
-    if (googleCalendarManager) {
-      googleCalendarManager.stop();
-    }
-    if (ipcHandlers) {
-      ipcHandlers._cleanupTextEditMonitor();
-    }
-    if (textEditMonitor) {
-      textEditMonitor.stopMonitoring();
-    }
-    if (updateManager) {
-      updateManager.cleanup();
-    }
-    // Stop whisper server if running
-    if (whisperManager) {
-      whisperManager.stopServer().catch(() => {});
-    }
-    // Stop parakeet WS server if running
-    if (parakeetManager) {
-      parakeetManager.stopServer().catch(() => {});
-    }
-    // Stop llama-server if running
-    const modelManager = require("./src/helpers/modelManagerBridge").default;
-    modelManager.stopServer().catch(() => {});
+  let isShuttingDown = false;
+  app.on("before-quit", (event) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    event.preventDefault();
+    performSyncTeardown();
+    sidecarRegistry.shutdownAll().finally(() => app.exit(0));
   });
+}
+
+function performSyncTeardown() {
+  if (authBridgeServer) {
+    authBridgeServer.close();
+    authBridgeServer = null;
+  }
+  if (cliBridge) {
+    cliBridge.stop().catch(() => {});
+    cliBridge = null;
+  }
+  if (windowManager && isLiveWindow(windowManager.agentWindow)) {
+    windowManager.agentWindow.destroy();
+  }
+  if (windowManager && isLiveWindow(windowManager.transcriptionPreviewWindow)) {
+    windowManager.transcriptionPreviewWindow.destroy();
+  }
+  if (hotkeyManager) {
+    hotkeyManager.unregisterAll();
+  } else {
+    globalShortcut.unregisterAll();
+  }
+  if (globeKeyManager) globeKeyManager.stop();
+  if (windowsKeyManager) windowsKeyManager.stop();
+  if (linuxKeyManager) linuxKeyManager.stop();
+  if (meetingDetectionEngine) meetingDetectionEngine.stop();
+  if (googleCalendarManager) googleCalendarManager.stop();
+  if (audioTapManager) audioTapManager.stop().catch(() => {});
+  if (linuxPortalAudioManager) linuxPortalAudioManager.stop().catch(() => {});
+  if (meetingAecManager) meetingAecManager.stop().catch(() => {});
+  if (ipcHandlers) ipcHandlers._cleanupTextEditMonitor();
+  if (textEditMonitor) textEditMonitor.stopMonitoring();
+  if (updateManager) updateManager.cleanup();
 }

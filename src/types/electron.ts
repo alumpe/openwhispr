@@ -1,6 +1,23 @@
 export type LocalTranscriptionProvider = "whisper" | "nvidia";
 
+export type InferenceMode = "openwhispr" | "providers" | "local" | "self-hosted" | "enterprise";
+
+export type SelfHostedType = "openai-compatible" | "lan";
+
 export type TranscriptionStatus = "completed" | "failed" | "pending";
+
+export type TranscriptionErrorCode =
+  | "TIMEOUT"
+  | "NETWORK"
+  | "SERVER_ERROR"
+  | "OFFLINE"
+  | "AUTH_EXPIRED"
+  | "AUTH_REQUIRED"
+  | "LIMIT_REACHED"
+  | "API_KEY_MISSING"
+  | "INVALID_KEY"
+  | "MODEL_NOT_AVAILABLE"
+  | null;
 
 export interface TranscriptionItem {
   id: number;
@@ -14,6 +31,11 @@ export interface TranscriptionItem {
   model: string | null;
   status: TranscriptionStatus;
   error_message: string | null;
+  error_code: TranscriptionErrorCode;
+  client_transcription_id: string;
+  cloud_id: string | null;
+  sync_status: "synced" | "pending" | "error";
+  deleted_at: string | null;
 }
 
 export interface NoteItem {
@@ -29,9 +51,37 @@ export interface NoteItem {
   folder_id: number | null;
   transcript: string | null;
   calendar_event_id: string | null;
+  participants: string | null;
+  diarization_enabled: number | null;
+  expected_speaker_count: number | null;
   cloud_id: string | null;
   created_at: string;
   updated_at: string;
+  client_note_id: string;
+  sync_status: "synced" | "pending" | "error";
+  deleted_at: string | null;
+  workspace_id?: string | null;
+  team_id?: string | null;
+}
+
+export type ShareVisibility = "private" | "link" | "domain" | "invited";
+
+export interface ShareSettings {
+  visibility: ShareVisibility;
+  token_prefix: string | null;
+  domain_allowlist: string[];
+  updated_by_user_id: string | null;
+  updated_at: string | null;
+}
+
+export interface NoteShareInvitation {
+  id: string;
+  email: string;
+  invited_by_user_id: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  last_emailed_at: string | null;
+  created_at: string;
 }
 
 export interface FolderItem {
@@ -40,6 +90,104 @@ export interface FolderItem {
   is_default: number;
   sort_order: number;
   created_at: string;
+  updated_at: string;
+  client_folder_id: string;
+  cloud_id: string | null;
+  sync_status: "synced" | "pending" | "error";
+  deleted_at: string | null;
+  workspace_id?: string | null;
+  team_id?: string | null;
+}
+
+export type WorkspaceRole = "owner" | "admin" | "member";
+export type TeamRole = "admin" | "member";
+
+export interface Workspace {
+  id: string;
+  name: string;
+  slug: string;
+  created_by_user_id: string;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  plan: string;
+  status: string;
+  trial_ends_at: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  seats: number;
+  created_at: string;
+  updated_at: string;
+  role: WorkspaceRole;
+}
+
+export interface WorkspaceMember {
+  user_id: string;
+  role: WorkspaceRole;
+  joined_at: string;
+  email: string;
+  name: string | null;
+  image: string | null;
+}
+
+export interface Team {
+  id: string;
+  workspace_id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  member_count?: number;
+}
+
+export interface TeamMember {
+  user_id: string;
+  role: TeamRole;
+  joined_at: string;
+  email: string;
+  name: string | null;
+  image: string | null;
+}
+
+export interface WorkspaceInvitation {
+  id: string;
+  email: string;
+  workspace_role: TeamRole;
+  team_ids: string[];
+  invited_by_user_id: string;
+  expires_at: string;
+  created_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface InvitationPreview {
+  id: string;
+  email: string;
+  workspace_role: TeamRole;
+  team_ids: string[];
+  expires_at: string;
+  workspace_id: string;
+  workspace_name: string;
+  workspace_slug: string;
+  inviter_name: string | null;
+  inviter_email: string | null;
+}
+
+export interface WorkspaceApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  scopes: string[];
+  last_used_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+  created_by_user_id: string | null;
+  description: string | null;
+}
+
+export interface NewWorkspaceApiKey extends WorkspaceApiKey {
+  key: string;
 }
 
 export interface ActionItem {
@@ -53,6 +201,12 @@ export interface ActionItem {
   translation_key: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface GpuDevice {
+  index: number;
+  name: string;
+  vramMb: number;
 }
 
 export interface GpuInfo {
@@ -113,6 +267,29 @@ export interface AudioDiagnosticsResult {
   whisperServer: { available: boolean; path: string | null };
   modelsDir: string;
   models: string[];
+}
+
+export type SystemAudioMode = "native" | "loopback" | "portal" | "unsupported";
+export type SystemAudioStrategy =
+  | "native"
+  | "loopback"
+  | "browser-portal"
+  | "portal-helper"
+  | "unsupported";
+
+export interface SystemAudioAccessResult {
+  granted: boolean;
+  status: "granted" | "denied" | "not-determined" | "restricted" | "unknown" | "unsupported";
+  mode: SystemAudioMode;
+  supportsPersistentGrant?: boolean;
+  supportsPersistentPortalGrant?: boolean;
+  supportsNativeCapture?: boolean;
+  supportsOnboardingGrant?: boolean;
+  requiresRuntimeSharePrompt?: boolean;
+  strategy?: SystemAudioStrategy;
+  restoreTokenAvailable?: boolean;
+  portalVersion?: number | null;
+  error?: string;
 }
 
 export interface UpdateCheckResult {
@@ -262,6 +439,21 @@ export interface LlamaVulkanDownloadProgress {
   percentage: number;
 }
 
+export interface ConversationPreview {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  archived_at?: string | null;
+  cloud_id?: string | null;
+  client_conversation_id?: string;
+  sync_status?: "synced" | "pending" | "error";
+  deleted_at?: string | null;
+  message_count: number;
+  last_message?: string | null;
+  last_message_role?: "user" | "assistant" | "system" | null;
+}
+
 export interface ReferralItem {
   id: string;
   email: string;
@@ -275,7 +467,14 @@ declare global {
   interface Window {
     electronAPI: {
       // Basic window operations
-      pasteText: (text: string, options?: { fromStreaming?: boolean }) => Promise<void>;
+      pasteText: (
+        text: string,
+        options?: {
+          fromStreaming?: boolean;
+          restoreClipboard?: boolean;
+          allowClipboardFallback?: boolean;
+        }
+      ) => Promise<void>;
       hideWindow: () => Promise<void>;
       showDictationPanel: () => Promise<void>;
       onToggleDictation: (callback: () => void) => () => void;
@@ -290,11 +489,25 @@ declare global {
         streamingProvider: string;
       } | null>;
 
+      getNoteRecordingConfig?: () => Promise<{
+        success: boolean;
+        providers: Array<{
+          id: string;
+          name: string;
+          models: Array<{ id: string; name: string; default?: boolean }>;
+        }>;
+      } | null>;
+
       // Database operations
       saveTranscription: (
         text: string,
         rawText?: string | null,
-        options?: { status?: TranscriptionStatus; errorMessage?: string | null }
+        options?: {
+          status?: TranscriptionStatus;
+          errorMessage?: string | null;
+          errorCode?: TranscriptionErrorCode;
+          clientTranscriptionId?: string;
+        }
       ) => Promise<{ id: number; success: boolean; transcription?: TranscriptionItem }>;
       getTranscriptions: (limit?: number) => Promise<TranscriptionItem[]>;
       clearTranscriptions: () => Promise<{ cleared: number; success: boolean }>;
@@ -314,8 +527,27 @@ declare global {
       getAudioStorageUsage: () => Promise<{ fileCount: number; totalBytes: number }>;
       deleteAllAudio: () => Promise<{ deleted: number }>;
       retryTranscription: (
-        id: number
-      ) => Promise<{ success: boolean; transcription?: TranscriptionItem; error?: string }>;
+        id: number,
+        settings?: {
+          useLocalWhisper: boolean;
+          localTranscriptionProvider: string;
+          cloudTranscriptionMode: string;
+          cloudTranscriptionProvider: string;
+          cloudTranscriptionModel: string;
+          cloudTranscriptionBaseUrl?: string;
+          parakeetModel: string;
+          whisperModel: string;
+          preferredLanguage?: string;
+          transcriptionMode?: InferenceMode;
+          remoteTranscriptionType?: SelfHostedType;
+          remoteTranscriptionUrl?: string;
+        }
+      ) => Promise<{
+        success: boolean;
+        transcription?: TranscriptionItem;
+        error?: string;
+        code?: TranscriptionErrorCode;
+      }>;
       updateTranscriptionText: (
         id: number,
         text: string,
@@ -356,6 +588,9 @@ declare global {
           folder_id?: number | null;
           transcript?: string | null;
           calendar_event_id?: string | null;
+          participants?: string | null;
+          diarization_enabled?: number | null;
+          expected_speaker_count?: number | null;
         }
       ) => Promise<{ success: boolean; note?: NoteItem }>;
       deleteNote: (id: number) => Promise<{ success: boolean }>;
@@ -363,7 +598,16 @@ declare global {
         noteId: number,
         format: "txt" | "md"
       ) => Promise<{ success: boolean; error?: string }>;
+      exportTranscript: (
+        noteId: number,
+        format: "txt" | "srt" | "json" | "md"
+      ) => Promise<{ success: boolean; error?: string }>;
       searchNotes: (query: string, limit?: number) => Promise<NoteItem[]>;
+      semanticSearchNotes: (query: string, limit?: number) => Promise<NoteItem[]>;
+      semanticReindexAll: () => Promise<{ success: boolean; indexed?: number; error?: string }>;
+      onSemanticReindexProgress: (
+        callback: (data: { done: number; total: number }) => void
+      ) => () => void;
       updateNoteCloudId: (id: number, cloudId: string) => Promise<NoteItem>;
 
       // Folder operations
@@ -377,6 +621,19 @@ declare global {
         name: string
       ) => Promise<{ success: boolean; folder?: FolderItem; error?: string }>;
       getFolderNoteCounts: () => Promise<Array<{ folder_id: number; count: number }>>;
+
+      // Note files (markdown mirror)
+      noteFilesSetEnabled?: (
+        enabled: boolean,
+        customPath?: string,
+        options?: { skipRebuild?: boolean }
+      ) => Promise<{ success: boolean; error?: string }>;
+      noteFilesSetPath?: (path: string) => Promise<{ success: boolean; error?: string }>;
+      noteFilesRebuild?: () => Promise<{ success: boolean; error?: string }>;
+      noteFilesGetDefaultPath?: () => Promise<string>;
+      noteFilesPickFolder?: () => Promise<{ canceled: boolean; path?: string }>;
+      showNoteFile?: (noteId: number) => Promise<{ success: boolean }>;
+      showFolderInExplorer?: (folderName: string) => Promise<{ success: boolean }>;
 
       // Action operations
       getActions: () => Promise<ActionItem[]>;
@@ -430,7 +687,6 @@ declare global {
       // API key management
       getOpenAIKey: () => Promise<string>;
       saveOpenAIKey: (key: string) => Promise<{ success: boolean }>;
-      createProductionEnvFile: (key: string) => Promise<void>;
       getAnthropicKey: () => Promise<string | null>;
       saveAnthropicKey: (key: string) => Promise<void>;
       getUiLanguage: () => Promise<string>;
@@ -441,12 +697,15 @@ declare global {
         useLocalWhisper: boolean;
         localTranscriptionProvider: LocalTranscriptionProvider;
         model?: string;
-        reasoningProvider: string;
-        reasoningModel?: string;
+        cleanupProvider: string;
+        cleanupModel?: string;
+        dictationAgentProvider: string;
+        dictationAgentModel?: string;
       }) => Promise<void>;
 
       // Clipboard operations
       checkAccessibilityPermission: (silent?: boolean) => Promise<boolean>;
+      promptAccessibilityPermission: () => Promise<boolean>;
       readClipboard: () => Promise<string>;
       writeClipboard: (text: string) => Promise<{ success: boolean }>;
       checkPasteTools: () => Promise<PasteToolsResult>;
@@ -478,6 +737,12 @@ declare global {
       }>;
 
       // CUDA GPU acceleration
+      listGpus?: () => Promise<GpuDevice[]>;
+      setGpuDeviceIndex?: (
+        purpose: "transcription" | "intelligence",
+        index: number
+      ) => Promise<{ success: boolean }>;
+      getGpuDeviceIndex?: (purpose: "transcription" | "intelligence") => Promise<string>;
       detectGpu: () => Promise<GpuInfo>;
       getCudaWhisperStatus: () => Promise<CudaWhisperStatus>;
       downloadCudaWhisperBinary: () => Promise<{ success: boolean; error?: string }>;
@@ -495,7 +760,7 @@ declare global {
       // Parakeet operations (NVIDIA via sherpa-onnx)
       transcribeLocalParakeet: (
         audioBlob: ArrayBuffer,
-        options?: { model?: string; language?: string }
+        options?: { model?: string }
       ) => Promise<ParakeetTranscriptionResult>;
       checkParakeetInstallation: () => Promise<ParakeetCheckResult>;
       downloadParakeetModel: (modelName: string) => Promise<ParakeetModelResult>;
@@ -567,6 +832,14 @@ declare global {
         config: any
       ) => Promise<{ success: boolean; text?: string; error?: string }>;
 
+      // Enterprise reasoning (Bedrock, Azure, Vertex)
+      processEnterpriseReasoning: (
+        text: string,
+        modelId: string,
+        agentName: string | null,
+        config: any
+      ) => Promise<{ success: boolean; text?: string; error?: string; retryable?: boolean }>;
+
       // llama.cpp management
       llamaCppCheck: () => Promise<{ isInstalled: boolean; version?: string }>;
       llamaCppInstall: () => Promise<{ success: boolean; error?: string }>;
@@ -601,21 +874,28 @@ declare global {
       windowMaximize: () => Promise<void>;
       windowClose: () => Promise<void>;
       windowIsMaximized: () => Promise<boolean>;
+      snapToMeetingMode: () => Promise<void>;
       restoreFromMeetingMode: () => Promise<void>;
       getPlatform: () => string;
       startWindowDrag: () => Promise<void>;
       stopWindowDrag: () => Promise<void>;
       setMainWindowInteractivity: (interactive: boolean) => Promise<void>;
+      setNotificationInteractivity: (interactive: boolean) => Promise<void>;
 
       // App management
       appQuit: () => Promise<void>;
-      cleanupApp: () => Promise<{ success: boolean; message: string }>;
+      cleanupApp: () => Promise<{ success: boolean; message: string; errors?: string[] }>;
 
       // Update operations
       checkForUpdates: () => Promise<UpdateCheckResult>;
       downloadUpdate: () => Promise<UpdateResult>;
       installUpdate: () => Promise<UpdateResult>;
       getAppVersion: () => Promise<AppVersionResult>;
+      getPostMigrationState: () => Promise<{ justMigrated: boolean }>;
+      getOAuthProtocolRegistered: () => Promise<boolean>;
+      getOAuthProtocol: () => Promise<string>;
+      markBundleMigrated: () => Promise<void>;
+      markBundleMigrationDismissed: () => Promise<void>;
       getUpdateStatus: () => Promise<UpdateStatusResult>;
       getUpdateInfo: () => Promise<UpdateInfoResult | null>;
 
@@ -638,6 +918,7 @@ declare global {
         isUsingGnome: boolean;
         isUsingHyprland: boolean;
         isUsingNativeShortcut: boolean;
+        supportsPushToTalk: boolean;
       }>;
 
       // Wayland paste diagnostics
@@ -660,12 +941,17 @@ declare global {
 
       // Hotkey registration events
       onHotkeyFallbackUsed?: (
-        callback: (data: { original: string; fallback: string; message: string }) => void
+        callback: (data: { original: string; fallback: string }) => void
       ) => () => void;
       onHotkeyRegistrationFailed?: (
         callback: (data: { hotkey: string; error: string; suggestions: string[] }) => void
       ) => () => void;
       onSettingUpdated?: (callback: (data: { key: string; value: unknown }) => void) => () => void;
+      onDictationKeyActive?: (callback: (key: string) => void) => () => void;
+      onLinuxPttPermissionDenied?: (callback: () => void) => () => void;
+
+      // Settings shortcut (Cmd+, / Ctrl+,)
+      onShowSettings?: (callback: () => void) => () => void;
 
       // Accessibility permission events (macOS)
       onAccessibilityMissing?: (callback: () => void) => () => void;
@@ -692,11 +978,43 @@ declare global {
       // Custom endpoint API keys
       getCustomTranscriptionKey?: () => Promise<string | null>;
       saveCustomTranscriptionKey?: (key: string) => Promise<void>;
-      getCustomReasoningKey?: () => Promise<string | null>;
-      saveCustomReasoningKey?: (key: string) => Promise<void>;
+      getCleanupCustomKey?: () => Promise<string | null>;
+      saveCleanupCustomKey?: (key: string) => Promise<void>;
+
+      // Enterprise provider key persistence
+      getBedrockRegion?: () => Promise<string | null>;
+      saveBedrockRegion?: (value: string) => Promise<void>;
+      getBedrockProfile?: () => Promise<string | null>;
+      saveBedrockProfile?: (value: string) => Promise<void>;
+      getBedrockAccessKeyId?: () => Promise<string | null>;
+      saveBedrockAccessKeyId?: (key: string) => Promise<void>;
+      getBedrockSecretAccessKey?: () => Promise<string | null>;
+      saveBedrockSecretAccessKey?: (key: string) => Promise<void>;
+      getBedrockSessionToken?: () => Promise<string | null>;
+      saveBedrockSessionToken?: (key: string) => Promise<void>;
+      getAzureEndpoint?: () => Promise<string | null>;
+      saveAzureEndpoint?: (value: string) => Promise<void>;
+      getAzureApiKey?: () => Promise<string | null>;
+      saveAzureApiKey?: (key: string) => Promise<void>;
+      getAzureDeployment?: () => Promise<string | null>;
+      saveAzureDeployment?: (value: string) => Promise<void>;
+      getAzureApiVersion?: () => Promise<string | null>;
+      saveAzureApiVersion?: (value: string) => Promise<void>;
+      getVertexProject?: () => Promise<string | null>;
+      saveVertexProject?: (value: string) => Promise<void>;
+      getVertexLocation?: () => Promise<string | null>;
+      saveVertexLocation?: (value: string) => Promise<void>;
+      getVertexApiKey?: () => Promise<string | null>;
+      saveVertexApiKey?: (key: string) => Promise<void>;
+      testEnterpriseConnection?: (
+        provider: string,
+        config: Record<string, string>
+      ) => Promise<{ success: boolean; error?: string; action?: string; copyCommand?: string }>;
 
       // Dictation key persistence (file-based for reliable startup)
       getDictationKey?: () => Promise<string | null>;
+      getActiveDictationKey?: () => Promise<string>;
+      getEffectiveDefaultHotkey?: () => Promise<string>;
       saveDictationKey?: (key: string) => Promise<void>;
 
       // Activation mode persistence (file-based for reliable startup)
@@ -731,11 +1049,13 @@ declare global {
 
       // System settings helpers
       requestMicrophoneAccess?: () => Promise<{ granted: boolean }>;
-      checkScreenRecordingAccess?: () => Promise<{ granted: boolean }>;
+      checkMicrophoneAccess?: () => Promise<{ granted: boolean; status: string }>;
+      checkSystemAudioAccess?: () => Promise<SystemAudioAccessResult>;
+      requestSystemAudioAccess?: () => Promise<SystemAudioAccessResult>;
       openMicrophoneSettings?: () => Promise<{ success: boolean; error?: string }>;
       openSoundInputSettings?: () => Promise<{ success: boolean; error?: string }>;
       openAccessibilitySettings?: () => Promise<{ success: boolean; error?: string }>;
-      openScreenRecordingSettings?: () => Promise<{ success: boolean; error?: string }>;
+      openSystemAudioSettings?: () => Promise<{ success: boolean; error?: string }>;
       toggleMediaPlayback?: () => Promise<boolean>;
       pauseMediaPlayback?: () => Promise<boolean>;
       resumeMediaPlayback?: () => Promise<boolean>;
@@ -744,6 +1064,7 @@ declare global {
       // Windows Push-to-Talk notifications
       notifyActivationModeChanged?: (mode: "tap" | "push") => void;
       notifyHotkeyChanged?: (hotkey: string) => void;
+      registerMeetingHotkey?: (hotkey: string) => Promise<{ success: boolean; message?: string }>;
       notifyFloatingIconAutoHideChanged?: (enabled: boolean) => void;
       onFloatingIconAutoHideChanged?: (callback: (enabled: boolean) => void) => () => void;
       notifyStartMinimizedChanged?: (enabled: boolean) => void;
@@ -755,6 +1076,8 @@ declare global {
 
       // Auth
       authClearSession?: () => Promise<void>;
+      authGetToken?: () => Promise<string | null>;
+      authSetToken?: (token: string) => Promise<void>;
 
       // OpenWhispr Cloud API
       cloudTranscribe?: (
@@ -763,6 +1086,7 @@ declare global {
       ) => Promise<{
         success: boolean;
         text?: string;
+        clientTranscriptionId?: string;
         wordsUsed?: number;
         wordsRemaining?: number;
         limitReached?: boolean;
@@ -776,6 +1100,7 @@ declare global {
           agentName?: string;
           customDictionary?: string[];
           customPrompt?: string;
+          systemPrompt?: string;
           language?: string;
           locale?: string;
         }
@@ -784,6 +1109,8 @@ declare global {
         text?: string;
         model?: string;
         provider?: string;
+        promptMode?: string;
+        matchType?: string;
         error?: string;
         code?: string;
       }>;
@@ -807,6 +1134,12 @@ declare global {
         limitReached?: boolean;
         error?: string;
         code?: string;
+      }>;
+      cloudHealthCheck?: () => Promise<{
+        ok: boolean;
+        status?: number;
+        code?: string;
+        messageKey?: string;
       }>;
       cloudUsage?: () => Promise<{
         success: boolean;
@@ -863,6 +1196,14 @@ declare global {
         error?: string;
       }>;
 
+      // Authenticated cloud API proxy
+      cloudApiRequest?: (opts: { method?: string; path: string; body?: unknown }) => Promise<{
+        success: boolean;
+        data?: unknown;
+        error?: string;
+        code?: string;
+      }>;
+
       // Cloud audio file transcription
       transcribeAudioFileCloud?: (filePath: string) => Promise<{
         success: boolean;
@@ -892,6 +1233,9 @@ declare global {
       onLimitReached?: (
         callback: (data: { wordsUsed: number; limit: number }) => void
       ) => () => void;
+
+      // Workspace invitation deep link
+      onWorkspaceInvitationToken?: (callback: (token: string) => void) => () => void;
 
       // AssemblyAI Streaming
       assemblyAiStreamingWarmup?: (options?: {
@@ -969,19 +1313,37 @@ declare global {
 
       // Agent Mode
       updateAgentHotkey?: (hotkey: string) => Promise<{ success: boolean; message: string }>;
-      notifyAgentHotkeyChanged?: (hotkey: string) => void;
       getAgentKey?: () => Promise<string>;
       saveAgentKey?: (key: string) => Promise<void>;
-      createAgentConversation?: (title: string) => Promise<{
+      createAgentConversation?: (
+        title: string,
+        noteId?: number
+      ) => Promise<{
         id: number;
         title: string;
+        note_id?: number | null;
         created_at: string;
         updated_at: string;
       }>;
+      getConversationsForNote?: (
+        noteId: number,
+        limit?: number
+      ) => Promise<
+        Array<{
+          id: number;
+          title: string;
+          created_at: string;
+          updated_at: string;
+          message_count: number;
+        }>
+      >;
       getAgentConversations?: (limit?: number) => Promise<
         Array<{
           id: number;
           title: string;
+          archived_at?: string;
+          cloud_id?: string;
+          client_conversation_id?: string;
           created_at: string;
           updated_at: string;
         }>
@@ -989,6 +1351,8 @@ declare global {
       getAgentConversation?: (id: number) => Promise<{
         id: number;
         title: string;
+        archived_at?: string;
+        cloud_id?: string;
         created_at: string;
         updated_at: string;
         messages: Array<{
@@ -996,6 +1360,7 @@ declare global {
           conversation_id: number;
           role: "user" | "assistant" | "system";
           content: string;
+          metadata?: string;
           created_at: string;
         }>;
       } | null>;
@@ -1004,12 +1369,14 @@ declare global {
       addAgentMessage?: (
         conversationId: number,
         role: "user" | "assistant" | "system",
-        content: string
+        content: string,
+        metadata?: Record<string, unknown>
       ) => Promise<{
         id: number;
         conversation_id: number;
         role: string;
         content: string;
+        metadata?: string;
         created_at: string;
       }>;
       getAgentMessages?: (conversationId: number) => Promise<
@@ -1018,9 +1385,26 @@ declare global {
           conversation_id: number;
           role: "user" | "assistant" | "system";
           content: string;
+          metadata?: string;
           created_at: string;
         }>
       >;
+      getAgentConversationsWithPreview?: (
+        limit?: number,
+        offset?: number,
+        includeArchived?: boolean
+      ) => Promise<ConversationPreview[]>;
+      searchAgentConversations?: (query: string, limit?: number) => Promise<ConversationPreview[]>;
+      archiveAgentConversation?: (id: number) => Promise<{ success: boolean }>;
+      unarchiveAgentConversation?: (id: number) => Promise<{ success: boolean }>;
+      updateAgentConversationCloudId?: (
+        id: number,
+        cloudId: string
+      ) => Promise<{ success: boolean }>;
+      semanticSearchConversations?: (
+        query: string,
+        limit?: number
+      ) => Promise<ConversationPreview[]>;
 
       // Deepgram Streaming
       deepgramStreamingWarmup?: (options?: { sampleRate?: number; language?: string }) => Promise<{
@@ -1071,13 +1455,44 @@ declare global {
       onAgentStopRecording?: (callback: () => void) => () => void;
       onAgentToggleRecording?: (callback: () => void) => () => void;
 
-      // Agent cloud streaming
-      cloudAgentStream?: (
-        messages: Array<{ role: string; content: string }>,
-        opts?: { systemPrompt?: string }
-      ) => Promise<{ success: boolean; error?: string; code?: string }>;
-      onAgentStreamChunk?: (callback: (chunk: string) => void) => () => void;
-      onAgentStreamDone?: (callback: () => void) => () => void;
+      // Agent cloud streaming (event-based)
+      startAgentStream?: (
+        messages: Array<{ role: string; content: string | Array<unknown> }>,
+        opts?: {
+          systemPrompt?: string;
+          tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
+        }
+      ) => void;
+      onAgentStreamChunk?: (
+        callback: (chunk: {
+          type: "content" | "tool_call" | "done";
+          text?: string;
+          id?: string;
+          name?: string;
+          arguments?: string;
+          finishReason?: string;
+        }) => void
+      ) => () => void;
+      onAgentStreamError?: (
+        callback: (error: { error: string; code?: string }) => void
+      ) => () => void;
+      onAgentStreamEnd?: (callback: () => void) => () => void;
+
+      // Agent cloud tools
+      agentOpenNote?: (noteId: number) => Promise<{ success: boolean; error?: string }>;
+      agentWebSearch?: (
+        query: string,
+        numResults?: number
+      ) => Promise<{
+        success: boolean;
+        results?: Array<{
+          title: string;
+          url: string;
+          text: string;
+          publishedDate?: string;
+        }>;
+        error?: string;
+      }>;
 
       // Google Calendar
       gcalStartOAuth?: () => Promise<{ success: boolean; email?: string; error?: string }>;
@@ -1092,30 +1507,35 @@ declare global {
         calendarId: string,
         isSelected: boolean
       ) => Promise<{ success: boolean; error?: string }>;
+      gcalSetPrimaryOnly?: (value: boolean) => Promise<{ success: boolean; error?: string }>;
       gcalSyncEvents?: () => Promise<{ success: boolean; error?: string }>;
       gcalGetUpcomingEvents?: (
         windowMinutes?: number
       ) => Promise<{ success: boolean; events: any[] }>;
-
-      // Meeting chain transcription (BaseTen)
-      meetingTranscribeChain?: (
-        blobUrl: string,
-        opts?: {
-          skipCleanup?: boolean;
-          agentName?: string;
-          customDictionary?: string[];
-        }
-      ) => Promise<{
+      gcalGetEvent?: (eventId: string) => Promise<{
         success: boolean;
-        text?: string;
-        rawText?: string;
-        cleanedText?: string;
-        processingDurationSec?: number;
-        speedupFactor?: number;
-        error?: string;
+        event: {
+          id: string;
+          summary: string | null;
+          start_time: string;
+          end_time: string;
+          attendees_count: number;
+          attendees: string | null;
+        } | null;
       }>;
 
-      // Meeting transcription (streaming)
+      // Contacts
+      searchContacts: (query: string) => Promise<{
+        success: boolean;
+        contacts: Array<{ email: string; display_name: string | null }>;
+      }>;
+      upsertContact: (contact: {
+        email: string;
+        displayName?: string | null;
+      }) => Promise<{ success: boolean }>;
+      getMD5Hash: (text: string) => Promise<string>;
+
+      // Meeting transcription (streaming, dual-channel)
       meetingTranscriptionPrepare?: (options: {
         provider?: string;
         model?: string;
@@ -1125,16 +1545,131 @@ declare global {
         provider?: string;
         model?: string;
         language?: string;
-      }) => Promise<{ success: boolean; error?: string }>;
-      meetingTranscriptionSend?: (buffer: ArrayBuffer) => void;
+        noteId?: number | null;
+      }) => Promise<{
+        success: boolean;
+        error?: string;
+        systemAudioMode?: SystemAudioMode;
+        systemAudioStrategy?: SystemAudioStrategy;
+        oneOnOneAttendee?: { displayName: string; email: string | null } | null;
+      }>;
+      meetingTranscriptionSend?: (buffer: ArrayBuffer, source: "mic" | "system") => void;
       meetingTranscriptionStop?: () => Promise<{
         success: boolean;
         transcript?: string;
+        diarizationSessionId?: string;
         error?: string;
       }>;
-      onMeetingTranscriptionPartial?: (callback: (text: string) => void) => () => void;
-      onMeetingTranscriptionFinal?: (callback: (text: string) => void) => () => void;
+      meetingTranscriptionCancel?: () => Promise<{
+        success: boolean;
+        reason?: "recording-active";
+      }>;
+      onMeetingTranscriptionSegment?: (
+        callback: (data: {
+          text: string;
+          source: "mic" | "system";
+          type: "partial" | "final" | "retract";
+          timestamp?: number;
+        }) => void
+      ) => () => void;
+      onMeetingSpeakerIdentified?: (
+        callback: (data: {
+          speakerId: string;
+          displayName?: string | null;
+          startTime: number;
+          endTime: number;
+        }) => void
+      ) => () => void;
+      onMeetingSpeakersMerged?: (
+        callback: (
+          merges: Array<{
+            keep: string;
+            remove: string;
+            displayName?: string | null;
+            similarity: number;
+          }>
+        ) => void
+      ) => () => void;
       onMeetingTranscriptionError?: (callback: (error: string) => void) => () => void;
+
+      // Speaker diarization
+      downloadDiarizationModels?: () => Promise<{ success: boolean; error?: string }>;
+      getDiarizationModelStatus?: () => Promise<{
+        available: boolean;
+        modelsDownloaded: boolean;
+      }>;
+      deleteDiarizationModels?: () => Promise<{ success: boolean }>;
+      cancelDiarizationDownload?: () => Promise<{
+        success: boolean;
+        message?: string;
+        error?: string;
+      }>;
+      onDiarizationDownloadProgress?: (callback: (data: any) => void) => () => void;
+      onMeetingDiarizationComplete?: (
+        callback: (data: {
+          sessionId?: string;
+          segments: Array<{
+            id: string;
+            text: string;
+            source: "mic" | "system";
+            timestamp?: number;
+            speaker?: string;
+            speakerName?: string;
+            speakerIsPlaceholder?: boolean;
+            suggestedName?: string;
+            suggestedProfileId?: number;
+            speakerStatus?: "provisional" | "confirmed" | "suggested" | "locked";
+            speakerLocked?: boolean;
+            speakerLockSource?: "user" | "diarization" | "suggestion";
+          }>;
+          speakerEmbeddings?: Record<string, number[]> | null;
+        }) => void
+      ) => () => void;
+
+      // Speaker name mapping
+      getSpeakerMappings?: (noteId: number) => Promise<
+        Array<{
+          note_id: number;
+          speaker_id: string;
+          profile_id: number | null;
+          display_name: string;
+        }>
+      >;
+      setSpeakerMapping?: (
+        noteId: number,
+        speakerId: string,
+        displayName: string,
+        email?: string | null,
+        profileId?: number | null
+      ) => Promise<{ success: boolean; profileId: number | null }>;
+      removeSpeakerMapping?: (noteId: number, speakerId: string) => Promise<{ success: boolean }>;
+      getSpeakerProfiles?: () => Promise<
+        Array<{
+          id: number;
+          display_name: string;
+          email: string | null;
+          sample_count: number;
+          created_at: string;
+          updated_at: string;
+        }>
+      >;
+      attachSpeakerEmail?: (
+        profileId: number,
+        email: string | null
+      ) => Promise<{
+        success: boolean;
+        error?: string;
+        profile?: {
+          id: number;
+          display_name: string;
+          email: string | null;
+          sample_count: number;
+        };
+      }>;
+      saveNoteSpeakerEmbeddings?: (
+        noteId: number,
+        embeddings: Record<string, number[]>
+      ) => Promise<{ success: boolean }>;
 
       // Dictation realtime streaming
       dictationRealtimeWarmup?: (options: {
@@ -1152,9 +1687,6 @@ declare global {
       onDictationRealtimeError?: (callback: (error: string) => void) => () => void;
       onDictationRealtimeSessionEnd?: (callback: (data: { text: string }) => void) => () => void;
 
-      // Desktop audio capture
-      getDesktopSources?: (types: string[]) => Promise<Array<{ id: string; name: string }>>;
-
       // Google Calendar event listeners
       onGcalMeetingStarting?: (callback: (data: any) => void) => () => void;
       onGcalMeetingEnded?: (callback: (data: any) => void) => () => void;
@@ -1166,10 +1698,42 @@ declare global {
       meetingDetectionSetPreferences?: (
         prefs: Record<string, boolean>
       ) => Promise<{ success: boolean }>;
-      meetingDetectionRespond?: (
-        detectionId: string,
-        action: string
+      syncNotificationPreferences?: (
+        prefs: Record<string, boolean>
       ) => Promise<{ success: boolean }>;
+      setSpeakerDiarizationEnabled?: (
+        enabled: boolean
+      ) => Promise<{ success: boolean; error?: string }>;
+      setMeetingSessionSpeakerConfig?: (config: {
+        enabled: boolean;
+        expectedCount: number;
+      }) => Promise<{ success: boolean; error?: string }>;
+      getWhisperVadConfig?: () => Promise<{
+        success: boolean;
+        config?: {
+          dictationSileroEnabled: boolean;
+          noteRecordingSileroEnabled: boolean;
+          meetingSileroEnabled: boolean;
+          threshold: number;
+          minSpeechDurationMs: number;
+          minSilenceDurationMs: number;
+          maxSpeechDurationS: number;
+          speechPadMs: number;
+          samplesOverlap: number;
+        };
+        error?: string;
+      }>;
+      setWhisperVadConfig?: (config: {
+        dictationSileroEnabled?: boolean;
+        noteRecordingSileroEnabled?: boolean;
+        meetingSileroEnabled?: boolean;
+        threshold?: number;
+        minSpeechDurationMs?: number;
+        minSilenceDurationMs?: number;
+        maxSpeechDurationS?: number;
+        speechPadMs?: number;
+        samplesOverlap?: number;
+      }) => Promise<{ success: boolean; config?: Record<string, unknown>; error?: string }>;
       onMeetingDetected?: (callback: (data: any) => void) => () => void;
       onMeetingDetectedStartRecording?: (callback: (data: any) => void) => () => void;
       onMeetingNotificationData?: (callback: (data: any) => void) => () => void;
@@ -1179,9 +1743,87 @@ declare global {
         detectionId: string,
         action: string
       ) => Promise<{ success: boolean }>;
-      onNavigateToMeetingNote?: (
-        callback: (data: { noteId: number; folderId: number; event: any }) => void
+      joinCalendarMeeting?: (eventId: string) => Promise<{ success: boolean }>;
+      getPendingMeetingNoteNavigation?: () => Promise<{
+        noteId: number;
+        folderId: number;
+        event: any;
+        trigger?: "hotkey" | "manual" | "calendar-join";
+      } | null>;
+      onMeetingNoteNavigationPending?: (callback: () => void) => () => void;
+      onNavigateToNote?: (
+        callback: (data: { noteId: number; folderId: number | null }) => void
       ) => () => void;
+      onUpdateNotificationData?: (
+        callback: (data: { version: string; releaseDate?: string }) => void
+      ) => () => void;
+      getUpdateNotificationData?: () => Promise<{
+        version: string;
+        releaseDate?: string;
+      } | null>;
+      updateNotificationReady?: () => Promise<void>;
+      updateNotificationRespond?: (action: string) => Promise<{ success: boolean }>;
+      onPreviewText?: (callback: (text: string) => void) => () => void;
+      onPreviewAppend?: (callback: (text: string) => void) => () => void;
+      onPreviewHold?: (callback: (payload: { showCleanup: boolean }) => void) => () => void;
+      onPreviewResult?: (callback: (payload: { text: string }) => void) => () => void;
+      onPreviewHide?: (callback: () => void) => () => void;
+      startDictationPreview?: (opts: {
+        provider: string;
+        model: string;
+        language?: string;
+      }) => Promise<{ success: boolean }>;
+      stopDictationPreview?: (opts?: { showCleanup?: boolean }) => Promise<{ success: boolean }>;
+      dismissDictationPreview?: () => Promise<{ success: boolean }>;
+      completeDictationPreview?: (payload: { text?: string }) => Promise<{ success: boolean }>;
+      hideDictationPreview?: () => Promise<{ success: boolean }>;
+      resizeTranscriptionPreviewWindow?: (
+        width: number,
+        height: number
+      ) => Promise<{
+        success: boolean;
+        bounds?: { x: number; y: number; width: number; height: number };
+      }>;
+      sendDictationPreviewAudio?: (data: ArrayBuffer) => void;
+
+      // Sync operations
+      getPendingNotes?: () => Promise<NoteItem[]>;
+      getPendingNoteDeletes?: () => Promise<NoteItem[]>;
+      getNoteByClientId?: (clientNoteId: string) => Promise<NoteItem | null>;
+      upsertNoteFromCloud?: (
+        cloudNote: Record<string, unknown>,
+        localFolderId: number | null
+      ) => Promise<NoteItem>;
+      markNoteSynced?: (id: number, cloudId: string) => Promise<void>;
+      markNoteSyncError?: (id: number) => Promise<void>;
+      hardDeleteNote?: (id: number) => Promise<void>;
+
+      getPendingFolders?: () => Promise<FolderItem[]>;
+      getFolderByClientId?: (clientFolderId: string) => Promise<FolderItem | null>;
+      upsertFolderFromCloud?: (cloudFolder: Record<string, unknown>) => Promise<FolderItem>;
+      markFolderSynced?: (id: number, cloudId: string) => Promise<void>;
+      getFolderIdMap?: () => Promise<FolderItem[]>;
+      getPendingFolderDeletes?: () => Promise<FolderItem[]>;
+      hardDeleteFolder?: (id: number) => Promise<{ success: boolean; id: number }>;
+
+      getPendingConversations?: () => Promise<ConversationPreview[]>;
+      getPendingConversationDeletes?: () => Promise<ConversationPreview[]>;
+      getConversationByClientId?: (clientId: string) => Promise<ConversationPreview | null>;
+      upsertConversationFromCloud?: (
+        cloudConv: Record<string, unknown>,
+        messages: Array<Record<string, unknown>>
+      ) => Promise<void>;
+      markConversationSynced?: (id: number, cloudId: string) => Promise<void>;
+      hardDeleteConversation?: (id: number) => Promise<void>;
+
+      getPendingTranscriptions?: () => Promise<TranscriptionItem[]>;
+      getTranscriptionByClientId?: (clientId: string) => Promise<TranscriptionItem | null>;
+      upsertTranscriptionFromCloud?: (
+        cloudTranscription: Record<string, unknown>
+      ) => Promise<TranscriptionItem>;
+      markTranscriptionSynced?: (id: number, cloudId: string) => Promise<void>;
+      getPendingTranscriptionDeletes?: () => Promise<TranscriptionItem[]>;
+      hardDeleteTranscription?: (id: number) => Promise<{ success: boolean; id: number }>;
     };
 
     api?: {

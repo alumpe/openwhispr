@@ -5,6 +5,29 @@ const isGnomeWayland =
   process.env.XDG_SESSION_TYPE === "wayland" &&
   /gnome|ubuntu|unity/i.test(process.env.XDG_CURRENT_DESKTOP || "");
 
+const isKDEWayland =
+  process.platform === "linux" &&
+  process.env.XDG_SESSION_TYPE === "wayland" &&
+  /kde/i.test(process.env.XDG_CURRENT_DESKTOP || "");
+
+const MAIN_OVERLAY_TYPE =
+  process.platform === "darwin"
+    ? "panel"
+    : process.platform === "linux"
+      ? isGnomeWayland || isKDEWayland
+        ? "normal"
+        : "toolbar"
+      : "normal";
+
+const FLOATING_OVERLAY_TYPE =
+  process.platform === "darwin"
+    ? "panel"
+    : process.platform === "linux"
+      ? isKDEWayland
+        ? "normal"
+        : "toolbar"
+      : "normal";
+
 const WINDOW_SIZES = {
   BASE: { width: 96, height: 96 },
   WITH_MENU: { width: 240, height: 280 },
@@ -29,19 +52,12 @@ const MAIN_WINDOW_CONFIG = {
   transparent: true,
   show: false,
   skipTaskbar: true,
-  focusable: true,
+  focusable: false,
   visibleOnAllWorkspaces: process.platform !== "win32",
   fullScreenable: false,
   hasShadow: false,
   acceptsFirstMouse: true,
-  type:
-    process.platform === "darwin"
-      ? "panel"
-      : process.platform === "linux"
-        ? isGnomeWayland
-          ? "normal"
-          : "toolbar"
-        : "normal",
+  type: MAIN_OVERLAY_TYPE,
 };
 
 // Control panel window configuration
@@ -58,7 +74,7 @@ const CONTROL_PANEL_CONFIG = {
     sandbox: false,
     // webSecurity: false disables same-origin policy. Required because in
     // production the renderer loads from a file:// origin but makes
-    // cross-origin fetch calls to Neon Auth, Gemini, OpenAI, and Groq APIs
+    // cross-origin fetch calls to Better Auth, Gemini, OpenAI, and Groq APIs
     // directly from the browser. These would be blocked by CORS otherwise.
     webSecurity: false,
     spellcheck: false,
@@ -84,8 +100,8 @@ const CONTROL_PANEL_CONFIG = {
 };
 
 const NOTIFICATION_WINDOW_CONFIG = {
-  width: 380,
-  height: 88,
+  width: 392,
+  height: 92,
   frame: false,
   transparent: true,
   alwaysOnTop: true,
@@ -101,8 +117,38 @@ const NOTIFICATION_WINDOW_CONFIG = {
     sandbox: true,
   },
   visibleOnAllWorkspaces: process.platform !== "win32",
-  type:
-    process.platform === "darwin" ? "panel" : process.platform === "linux" ? "toolbar" : "normal",
+  type: FLOATING_OVERLAY_TYPE,
+};
+
+const TRANSCRIPTION_PREVIEW_SIZE_LIMITS = {
+  minWidth: 400,
+  defaultWidth: 460,
+  maxWidth: 640,
+  minHeight: 96,
+  defaultHeight: 132,
+  maxHeight: 520,
+};
+
+const TRANSCRIPTION_PREVIEW_CONFIG = {
+  width: TRANSCRIPTION_PREVIEW_SIZE_LIMITS.defaultWidth,
+  height: TRANSCRIPTION_PREVIEW_SIZE_LIMITS.defaultHeight,
+  frame: false,
+  transparent: true,
+  alwaysOnTop: true,
+  skipTaskbar: true,
+  resizable: false,
+  focusable: false,
+  hasShadow: false,
+  show: false,
+  acceptsFirstMouse: true,
+  webPreferences: {
+    preload: path.join(__dirname, "..", "..", "preload.js"),
+    nodeIntegration: false,
+    contextIsolation: true,
+    sandbox: true,
+  },
+  visibleOnAllWorkspaces: process.platform !== "win32",
+  type: FLOATING_OVERLAY_TYPE,
 };
 
 class WindowPositionUtil {
@@ -128,12 +174,32 @@ class WindowPositionUtil {
   }
 
   static getNotificationPosition(display) {
-    const width = 380;
-    const height = 88;
+    const { width, height } = NOTIFICATION_WINDOW_CONFIG;
     const MARGIN = 16;
     const workArea = display.workArea || display.bounds;
     const x = Math.max(0, workArea.x + workArea.width - width - MARGIN);
     const y = Math.max(0, workArea.y + MARGIN);
+    return { x, y, width, height };
+  }
+
+  static getTranscriptionPreviewPosition(display, mainWindowBounds, size = {}) {
+    const width =
+      size.width ||
+      TRANSCRIPTION_PREVIEW_CONFIG.width ||
+      TRANSCRIPTION_PREVIEW_SIZE_LIMITS.defaultWidth;
+    const height =
+      size.height ||
+      TRANSCRIPTION_PREVIEW_CONFIG.height ||
+      TRANSCRIPTION_PREVIEW_SIZE_LIMITS.defaultHeight;
+    const GAP = 8;
+    const workArea = display.workArea || display.bounds;
+
+    let x = Math.round(mainWindowBounds.x + (mainWindowBounds.width - width) / 2);
+    let y = mainWindowBounds.y - height - GAP;
+
+    x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - width));
+    y = Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - height));
+
     return { x, y, width, height };
   }
 
@@ -156,6 +222,7 @@ class WindowPositionUtil {
     } else if (isGnomeWayland) {
       window.setAlwaysOnTop(true, "floating");
     } else {
+      // KDE XWayland and other Linux — "screen-saver" is the strongest z-level
       window.setAlwaysOnTop(true, "screen-saver");
     }
   }
@@ -178,8 +245,7 @@ const AGENT_OVERLAY_CONFIG = {
   resizable: false,
   fullScreenable: false,
   acceptsFirstMouse: true,
-  type:
-    process.platform === "darwin" ? "panel" : process.platform === "linux" ? "toolbar" : "normal",
+  type: FLOATING_OVERLAY_TYPE,
   visibleOnAllWorkspaces: process.platform !== "win32",
   webPreferences: {
     preload: path.join(__dirname, "..", "..", "preload.js"),
@@ -197,6 +263,8 @@ module.exports = {
   CONTROL_PANEL_CONFIG,
   AGENT_OVERLAY_CONFIG,
   NOTIFICATION_WINDOW_CONFIG,
+  TRANSCRIPTION_PREVIEW_CONFIG,
+  TRANSCRIPTION_PREVIEW_SIZE_LIMITS,
   WINDOW_SIZES,
   WindowPositionUtil,
 };

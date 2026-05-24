@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "./useAuth";
 import { CACHE_CONFIG } from "../config/constants";
-import { withSessionRefresh } from "../lib/neonAuth";
+import { withSessionRefresh } from "../lib/auth";
 
 interface UsageData {
   wordsUsed: number;
@@ -96,6 +96,7 @@ export function useUsage(): UseUsageResult | null {
             resetAt: result.resetAt ?? "rolling",
           });
           lastFetchRef.current = Date.now();
+          localStorage.setItem("isSubscribed", String(result.isSubscribed ?? false));
         } else {
           const error: any = new Error(result.error || "Failed to fetch usage");
           error.code = result.code;
@@ -113,7 +114,11 @@ export function useUsage(): UseUsageResult | null {
   const pendingRefetchRef = useRef(false);
 
   useEffect(() => {
-    if (!isLoaded || !isSignedIn) return;
+    if (!isLoaded || !isSignedIn) {
+      lastFetchRef.current = 0;
+      setData(null);
+      return;
+    }
 
     const shouldFetch = Date.now() - lastFetchRef.current > USAGE_CACHE_TTL;
     if (shouldFetch) {

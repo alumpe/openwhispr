@@ -9,6 +9,7 @@ import { formatDateGroup } from "../utils/dateFormatting";
 import { cn } from "./lib/utils";
 import { useUpcomingEvents } from "../hooks/useUpcomingEvents";
 import UpcomingMeetings from "./UpcomingMeetings";
+import { useSettingsStore } from "../stores/settingsStore";
 
 interface HistoryViewProps {
   history: TranscriptionItemType[];
@@ -18,7 +19,7 @@ interface HistoryViewProps {
   setShowCloudMigrationBanner: (show: boolean) => void;
   aiCTADismissed: boolean;
   setAiCTADismissed: (dismissed: boolean) => void;
-  useReasoningModel: boolean;
+  useCleanupModel: boolean;
   copyToClipboard: (text: string) => void;
   deleteTranscription: (id: number) => void;
   clearAllTranscriptions: () => void;
@@ -35,7 +36,7 @@ export default function HistoryView({
   setShowCloudMigrationBanner,
   aiCTADismissed,
   setAiCTADismissed,
-  useReasoningModel,
+  useCleanupModel,
   copyToClipboard,
   deleteTranscription,
   clearAllTranscriptions,
@@ -44,6 +45,7 @@ export default function HistoryView({
   onRetryTranscription,
 }: HistoryViewProps) {
   const { t } = useTranslation();
+  const dataRetentionEnabled = useSettingsStore((s) => s.dataRetentionEnabled);
   const { events, isLoading: eventsLoading, isConnected } = useUpcomingEvents();
 
   const groupedHistory = useMemo(() => {
@@ -109,7 +111,7 @@ export default function HistoryView({
           </div>
         )}
 
-        {!useReasoningModel && !aiCTADismissed && (
+        {!useCleanupModel && !aiCTADismissed && (
           <div className="mb-3 relative rounded-lg border border-primary/20 bg-primary/5 dark:bg-primary/10 p-3">
             <button
               onClick={() => {
@@ -153,6 +155,14 @@ export default function HistoryView({
                 <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
                   {t("upcoming.transcriptions")}
                 </span>
+              </div>
+            )}
+            {!dataRetentionEnabled && (
+              <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10 px-3.5 py-2.5 flex items-center gap-2.5">
+                <span className="text-amber-600 dark:text-amber-400 shrink-0 text-sm">⊘</span>
+                <p className="text-xs text-amber-700 dark:text-amber-300/90 leading-relaxed">
+                  {t("controlPanel.history.dataRetentionDisabled")}
+                </p>
               </div>
             )}
             {isLoading ? (

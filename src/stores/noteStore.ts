@@ -1,11 +1,20 @@
 import { create } from "zustand";
-import type { NoteItem } from "../types/electron";
+import type { NoteItem, NoteShareInvitation, ShareSettings } from "../types/electron";
+
+export interface NoteShareCacheEntry {
+  share: ShareSettings;
+  invitations: NoteShareInvitation[];
+  // Raw token is returned by the API exactly once (on generate or rotate)
+  // and is only kept in memory for the active dialog session.
+  rawToken: string | null;
+}
 
 interface NoteState {
   notes: NoteItem[];
   activeNoteId: number | null;
   activeFolderId: number | null;
   migration: { total: number; done: number } | null;
+  shareByCloudId: Map<string, NoteShareCacheEntry>;
 }
 
 const useNoteStore = create<NoteState>()(() => ({
@@ -13,11 +22,13 @@ const useNoteStore = create<NoteState>()(() => ({
   activeNoteId: null,
   activeFolderId: null,
   migration: null,
+  shareByCloudId: new Map<string, NoteShareCacheEntry>(),
 }));
 
 let hasBoundIpcListeners = false;
 const DEFAULT_LIMIT = 50;
 let currentLimit = DEFAULT_LIMIT;
+let loadGeneration = 0;
 
 function ensureIpcListeners() {
   if (hasBoundIpcListeners || typeof window === "undefined") {
@@ -69,9 +80,11 @@ export async function initializeNotes(
   limit = DEFAULT_LIMIT,
   folderId?: number | null
 ): Promise<NoteItem[]> {
+  const gen = ++loadGeneration;
   currentLimit = limit;
   ensureIpcListeners();
   const items = (await window.electronAPI?.getNotes(noteType, limit, folderId)) ?? [];
+  if (gen !== loadGeneration) return items;
   useNoteStore.setState({ notes: items });
   return items;
 }
@@ -94,10 +107,16 @@ export function updateNoteInStore(note: NoteItem): void {
 
 export function removeNote(id: number): void {
   if (id == null) return;
-  const { notes } = useNoteStore.getState();
+  const { notes, activeNoteId } = useNoteStore.getState();
   const next = notes.filter((item) => item.id !== id);
   if (next.length === notes.length) return;
-  useNoteStore.setState({ notes: next });
+  const update: Partial<NoteState> = { notes: next };
+  if (activeNoteId === id) {
+    const idx = notes.findIndex((item) => item.id === id);
+    const neighbor = next[Math.min(idx, next.length - 1)] ?? null;
+    update.activeNoteId = neighbor?.id ?? null;
+  }
+  useNoteStore.setState(update);
 }
 
 export function setActiveNoteId(id: number | null): void {
@@ -134,41 +153,6 @@ export function useMigration(): { total: number; done: number } | null {
   return useNoteStore((state) => state.migration);
 }
 
-export async function syncNoteToCloud(note: NoteItem): Promise<void> {
-  const { NotesService } = await import("../services/NotesService.js");
-  const cloudNote = await NotesService.create({
-    client_note_id: String(note.id),
-    title: note.title,
-    content: note.content,
-    enhanced_content: note.enhanced_content,
-    enhancement_prompt: note.enhancement_prompt,
-    note_type: note.note_type,
-    source_file: note.source_file,
-    audio_duration_seconds: note.audio_duration_seconds,
-    created_at: note.created_at,
-    updated_at: note.updated_at,
-  });
-  await window.electronAPI.updateNoteCloudId(note.id, cloudNote.id);
-  updateNoteInStore({ ...note, cloud_id: cloudNote.id });
-}
-
-export async function syncNoteUpdateToCloud(
-  note: NoteItem,
-  updates: Partial<NoteItem>
-): Promise<void> {
-  const { NotesService } = await import("../services/NotesService.js");
-  if (note.cloud_id) {
-    await NotesService.update(note.cloud_id, updates);
-  } else {
-    await syncNoteToCloud(note);
-  }
-}
-
-export async function syncNoteDeleteToCloud(cloudId: string): Promise<void> {
-  const { NotesService } = await import("../services/NotesService.js");
-  await NotesService.delete(cloudId);
-}
-
 export async function startMigration(): Promise<void> {
   const allNotes = (await window.electronAPI?.getNotes(null, 9999, null)) ?? [];
   const unsynced = allNotes.filter((n) => !n.cloud_id);
@@ -184,7 +168,7 @@ export async function startMigration(): Promise<void> {
     try {
       const { created } = await NotesService.batchCreate(
         chunk.map((n) => ({
-          client_note_id: String(n.id),
+          client_note_id: n.client_note_id,
           title: n.title,
           content: n.content,
           enhanced_content: n.enhanced_content,
@@ -196,10 +180,14 @@ export async function startMigration(): Promise<void> {
           updated_at: n.updated_at,
         }))
       );
+      const notesByClientId = new Map(chunk.map((n) => [n.client_note_id, n]));
       await Promise.all(
-        created.map(({ client_note_id, id: cloudId }) =>
-          window.electronAPI.updateNoteCloudId(parseInt(client_note_id, 10), cloudId)
-        )
+        created.map(({ client_note_id, id: cloudId }) => {
+          const local = notesByClientId.get(client_note_id);
+          return local
+            ? window.electronAPI.updateNoteCloudId(local.id, cloudId)
+            : Promise.resolve();
+        })
       );
       useNoteStore.setState((s) => ({
         migration: s.migration
@@ -215,4 +203,33 @@ export async function startMigration(): Promise<void> {
   }
 
   useNoteStore.setState({ migration: null });
+}
+
+export function setShareCache(cloudId: string, entry: NoteShareCacheEntry): void {
+  const { shareByCloudId } = useNoteStore.getState();
+  const next = new Map(shareByCloudId);
+  next.set(cloudId, entry);
+  useNoteStore.setState({ shareByCloudId: next });
+}
+
+export function updateShareCache(
+  cloudId: string,
+  updater: (current: NoteShareCacheEntry | undefined) => NoteShareCacheEntry
+): void {
+  const { shareByCloudId } = useNoteStore.getState();
+  const next = new Map(shareByCloudId);
+  next.set(cloudId, updater(next.get(cloudId)));
+  useNoteStore.setState({ shareByCloudId: next });
+}
+
+export function clearShareCache(cloudId: string): void {
+  const { shareByCloudId } = useNoteStore.getState();
+  if (!shareByCloudId.has(cloudId)) return;
+  const next = new Map(shareByCloudId);
+  next.delete(cloudId);
+  useNoteStore.setState({ shareByCloudId: next });
+}
+
+export function useShareCacheEntry(cloudId: string | null): NoteShareCacheEntry | null {
+  return useNoteStore((state) => (cloudId ? (state.shareByCloudId.get(cloudId) ?? null) : null));
 }

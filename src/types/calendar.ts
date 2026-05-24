@@ -4,6 +4,7 @@ export interface GoogleCalendar {
   description: string | null;
   background_color: string | null;
   is_selected: number;
+  is_primary: number;
   sync_token: string | null;
 }
 
@@ -19,6 +20,7 @@ export interface CalendarEvent {
   conference_data: string | null;
   organizer_email: string | null;
   attendees_count: number;
+  attendees: string | null;
 }
 
 export interface GoogleCalendarAccount {
@@ -44,4 +46,16 @@ export interface MeetingDetection {
     detectedAt: number;
   };
   imminentEvent?: CalendarEvent | null;
+}
+
+export interface CalendarAttendee {
+  email: string;
+  displayName: string | null;
+  responseStatus: "needsAction" | "declined" | "tentative" | "accepted" | null;
+  self: boolean;
+}
+
+export interface Contact {
+  email: string;
+  display_name: string | null;
 }

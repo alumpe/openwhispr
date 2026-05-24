@@ -15,7 +15,8 @@ import { notesInputClass, notesTextareaClass } from "./shared";
 import { useDialogs } from "../../hooks/useDialogs";
 import { AlertDialog } from "../ui/dialog";
 import ReasoningModelSelector from "../ReasoningModelSelector";
-import { useScreenRecordingPermission } from "../../hooks/useScreenRecordingPermission";
+import { useSystemAudioPermission } from "../../hooks/useSystemAudioPermission";
+import { canManageSystemAudioInApp } from "../../utils/systemAudioAccess";
 
 interface NotesOnboardingProps {
   onComplete: () => void;
@@ -33,39 +34,37 @@ export default function NotesOnboarding({ onComplete }: NotesOnboardingProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [justCreated, setJustCreated] = useState(false);
 
-  const reasoningModel = useSettingsStore((s) => s.reasoningModel);
-  const setReasoningModel = useSettingsStore((s) => s.setReasoningModel);
-  const reasoningProvider = useSettingsStore((s) => s.reasoningProvider);
-  const setReasoningProvider = useSettingsStore((s) => s.setReasoningProvider);
-  const cloudReasoningBaseUrl = useSettingsStore((s) => s.cloudReasoningBaseUrl);
-  const setCloudReasoningBaseUrl = useSettingsStore((s) => s.setCloudReasoningBaseUrl);
-  const openaiApiKey = useSettingsStore((s) => s.openaiApiKey);
-  const setOpenaiApiKey = useSettingsStore((s) => s.setOpenaiApiKey);
-  const anthropicApiKey = useSettingsStore((s) => s.anthropicApiKey);
-  const setAnthropicApiKey = useSettingsStore((s) => s.setAnthropicApiKey);
-  const geminiApiKey = useSettingsStore((s) => s.geminiApiKey);
-  const setGeminiApiKey = useSettingsStore((s) => s.setGeminiApiKey);
-  const groqApiKey = useSettingsStore((s) => s.groqApiKey);
-  const setGroqApiKey = useSettingsStore((s) => s.setGroqApiKey);
-  const customReasoningApiKey = useSettingsStore((s) => s.customReasoningApiKey);
-  const setCustomReasoningApiKey = useSettingsStore((s) => s.setCustomReasoningApiKey);
+  const cleanupModel = useSettingsStore((s) => s.cleanupModel);
+  const setCleanupModel = useSettingsStore((s) => s.setCleanupModel);
+  const cleanupProvider = useSettingsStore((s) => s.cleanupProvider);
+  const setCleanupProvider = useSettingsStore((s) => s.setCleanupProvider);
+  const setCleanupMode = useSettingsStore((s) => s.setCleanupMode);
+  const cleanupCloudBaseUrl = useSettingsStore((s) => s.cleanupCloudBaseUrl);
+  const setCleanupCloudBaseUrl = useSettingsStore((s) => s.setCleanupCloudBaseUrl);
+  const cleanupCustomApiKey = useSettingsStore((s) => s.cleanupCustomApiKey);
+  const setCleanupCustomApiKey = useSettingsStore((s) => s.setCleanupCustomApiKey);
 
   const { alertDialog, hideAlertDialog } = useDialogs();
   const {
-    granted: screenRecordingGranted,
-    request: requestScreenRecording,
-    isMacOS,
-  } = useScreenRecordingPermission();
-  const [isRequestingScreenPermission, setIsRequestingScreenPermission] = useState(false);
+    granted: systemAudioGranted,
+    mode: systemAudioMode,
+    supportsOnboardingGrant: systemAudioSupportsOnboardingGrant,
+    request: requestSystemAudio,
+  } = useSystemAudioPermission();
+  const [isRequestingSystemAudio, setIsRequestingSystemAudio] = useState(false);
+  const shouldShowSystemAudioPermission = canManageSystemAudioInApp({
+    mode: systemAudioMode,
+    supportsOnboardingGrant: systemAudioSupportsOnboardingGrant,
+  });
 
-  const handleGrantScreenRecording = useCallback(async () => {
-    setIsRequestingScreenPermission(true);
+  const handleGrantSystemAudio = useCallback(async () => {
+    setIsRequestingSystemAudio(true);
     try {
-      await requestScreenRecording();
+      await requestSystemAudio();
     } finally {
-      setIsRequestingScreenPermission(false);
+      setIsRequestingSystemAudio(false);
     }
-  }, [requestScreenRecording]);
+  }, [requestSystemAudio]);
 
   useEffect(() => {
     initializeActions();
@@ -162,34 +161,27 @@ export default function NotesOnboarding({ onComplete }: NotesOnboardingProps) {
                 </p>
 
                 <ReasoningModelSelector
-                  reasoningModel={reasoningModel}
-                  setReasoningModel={setReasoningModel}
-                  localReasoningProvider={reasoningProvider}
-                  setLocalReasoningProvider={setReasoningProvider}
-                  cloudReasoningBaseUrl={cloudReasoningBaseUrl}
-                  setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
-                  openaiApiKey={openaiApiKey}
-                  setOpenaiApiKey={setOpenaiApiKey}
-                  anthropicApiKey={anthropicApiKey}
-                  setAnthropicApiKey={setAnthropicApiKey}
-                  geminiApiKey={geminiApiKey}
-                  setGeminiApiKey={setGeminiApiKey}
-                  groqApiKey={groqApiKey}
-                  setGroqApiKey={setGroqApiKey}
-                  customReasoningApiKey={customReasoningApiKey}
-                  setCustomReasoningApiKey={setCustomReasoningApiKey}
+                  reasoningModel={cleanupModel}
+                  setReasoningModel={setCleanupModel}
+                  localReasoningProvider={cleanupProvider}
+                  setLocalReasoningProvider={setCleanupProvider}
+                  cloudReasoningBaseUrl={cleanupCloudBaseUrl}
+                  setCloudReasoningBaseUrl={setCleanupCloudBaseUrl}
+                  customReasoningApiKey={cleanupCustomApiKey}
+                  setCustomReasoningApiKey={setCleanupCustomApiKey}
+                  setReasoningMode={setCleanupMode}
                 />
               </div>
             )}
           </div>
         )}
 
-        {/* System Audio Permission — macOS only */}
-        {isMacOS && (
+        {/* System Audio Permission */}
+        {shouldShowSystemAudioPermission && (
           <div
             className={cn(
               "rounded-lg border transition-colors duration-200",
-              screenRecordingGranted
+              systemAudioGranted
                 ? "border-success/20 bg-success/[0.03]"
                 : "border-foreground/8 dark:border-white/6 bg-surface-1/30 dark:bg-white/[0.02]"
             )}
@@ -198,7 +190,7 @@ export default function NotesOnboarding({ onComplete }: NotesOnboardingProps) {
               <div className="flex items-center gap-2.5">
                 <Monitor
                   size={13}
-                  className={cn(screenRecordingGranted ? "text-success/60" : "text-foreground/30")}
+                  className={cn(systemAudioGranted ? "text-success/60" : "text-foreground/30")}
                 />
                 <div>
                   <span className="text-xs font-medium text-foreground/70">
@@ -209,19 +201,19 @@ export default function NotesOnboarding({ onComplete }: NotesOnboardingProps) {
                   </p>
                 </div>
               </div>
-              {screenRecordingGranted ? (
-                <span className="text-xs text-success/60 font-medium shrink-0">
+              {systemAudioGranted ? (
+                <span className="text-xs font-medium text-success/60 shrink-0">
                   {t("notes.onboarding.systemAudio.enabled")}
                 </span>
               ) : (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleGrantScreenRecording}
-                  disabled={isRequestingScreenPermission}
+                  onClick={handleGrantSystemAudio}
+                  disabled={isRequestingSystemAudio}
                   className="h-7 text-xs shrink-0"
                 >
-                  {isRequestingScreenPermission ? (
+                  {isRequestingSystemAudio ? (
                     <Loader2 size={12} className="animate-spin" />
                   ) : (
                     t("notes.onboarding.systemAudio.grant")

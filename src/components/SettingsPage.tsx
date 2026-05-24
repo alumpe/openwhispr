@@ -16,6 +16,8 @@ import {
   Monitor,
   Cloud,
   Key,
+  Cpu,
+  Network,
   Sparkles,
   AlertTriangle,
   Loader2,
@@ -26,14 +28,20 @@ import {
   RotateCw,
   BookOpen,
   Copy,
+  Trash2,
+  Info,
+  MessageSquare,
+  FileAudio,
+  Wand2,
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
-import { NEON_AUTH_URL, signOut } from "../lib/neonAuth";
+import { AUTH_URL, signOut, deleteAccount } from "../lib/auth";
 import MicPermissionWarning from "./ui/MicPermissionWarning";
 import MicrophoneSettings from "./ui/MicrophoneSettings";
 import PermissionCard from "./ui/PermissionCard";
 import PasteToolsInfo from "./ui/PasteToolsInfo";
 import TranscriptionModelPicker from "./TranscriptionModelPicker";
+import SelfHostedPanel from "./SelfHostedPanel";
 import {
   ConfirmDialog,
   AlertDialog,
@@ -47,37 +55,49 @@ import {
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import { useSettings } from "../hooks/useSettings";
 import { useDialogs } from "../hooks/useDialogs";
-import { useAgentName } from "../utils/agentName";
 import { useWhisper } from "../hooks/useWhisper";
 import { usePermissions } from "../hooks/usePermissions";
-import { useScreenRecordingPermission } from "../hooks/useScreenRecordingPermission";
+import { useSystemAudioPermission } from "../hooks/useSystemAudioPermission";
 import { useClipboard } from "../hooks/useClipboard";
 import { useUpdater } from "../hooks/useUpdater";
 
 import PromptStudio from "./ui/PromptStudio";
-import ReasoningModelSelector from "./ReasoningModelSelector";
+import { ProviderTabs } from "./ui/ProviderTabs";
 import { HotkeyInput } from "./ui/HotkeyInput";
 import { useHotkeyRegistration } from "../hooks/useHotkeyRegistration";
-import { getValidationMessage } from "../utils/hotkeyValidator";
+import { useLocalStorage } from "../hooks/useLocalStorage";
+import { validateHotkeyForSlot } from "../utils/hotkeyValidation";
 import { getPlatform, getCachedPlatform } from "../utils/platform";
-import { getDefaultHotkey, formatHotkeyLabel } from "../utils/hotkeys";
+import { formatHotkeyLabel } from "../utils/hotkeys";
 import { ActivationModeSelector } from "./ui/ActivationModeSelector";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import LinuxPttSetupInfo from "./ui/LinuxPttSetupInfo";
 import { Toggle } from "./ui/toggle";
 import DeveloperSection from "./DeveloperSection";
-import AgentModeSettings from "./settings/AgentModeSettings";
+import ChatAgentSettings from "./settings/ChatAgentSettings";
+import DictationAgentSettings from "./settings/DictationAgentSettings";
+import InferenceConfigEditor from "./settings/InferenceConfigEditor";
+import { MeetingTranscriptionPanel } from "./settings/MeetingSettings";
 import LanguageSelector from "./ui/LanguageSelector";
 import { Skeleton } from "./ui/skeleton";
 import { Progress } from "./ui/progress";
-import { useToast } from "./ui/Toast";
+import { useToast } from "./ui/useToast";
 import { useTheme } from "../hooks/useTheme";
-import type { LocalTranscriptionProvider } from "../types/electron";
+import type { GpuDevice, LocalTranscriptionProvider, InferenceMode } from "../types/electron";
 import logger from "../utils/logger";
-import { SettingsRow } from "./ui/SettingsSection";
+import { SettingsRow, InferenceModeSelector } from "./ui/SettingsSection";
+import type { InferenceModeOption } from "./ui/SettingsSection";
+import { useSettingsLayout } from "./ui/useSettingsLayout";
 import { useUsage } from "../hooks/useUsage";
 import { cn } from "./lib/utils";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { startMigration, useMigration } from "../stores/noteStore.js";
+import { syncService } from "../services/SyncService.js";
 import { formatBytes } from "../utils/formatBytes";
 import { useSettingsStore } from "../stores/settingsStore";
+import { canManageSystemAudioInApp } from "../utils/systemAudioAccess";
+import WorkspaceSection from "./settings/WorkspaceSection";
+import { WORKSPACES_ENABLED } from "../lib/features";
 
 const formatAmount = (cents: number, currency: string) =>
   (cents / 100).toLocaleString(undefined, { style: "currency", currency });
@@ -85,19 +105,19 @@ const formatAmount = (cents: number, currency: string) =>
 export type SettingsSectionType =
   | "account"
   | "plansBilling"
+  | "workspace"
   | "general"
   | "hotkeys"
-  | "transcription"
-  | "intelligence"
+  | "speechToText"
+  | "llms"
   | "privacyData"
-  | "system"
-  | "aiModels"
-  | "agentConfig"
-  | "prompts"
-  | "agentMode";
+  | "system";
 
 interface SettingsPageProps {
   activeSection?: SettingsSectionType;
+  onNavigateToSection?: (section: SettingsSectionType) => void;
+  /** When a legacy section ID was used (e.g. `meetings`), land on the matching sub-tab. */
+  initialSubTab?: string;
 }
 
 const UI_LANGUAGE_OPTIONS: import("./ui/LanguageSelector").LanguageOption[] = [
@@ -112,6 +132,8 @@ const UI_LANGUAGE_OPTIONS: import("./ui/LanguageSelector").LanguageOption[] = [
   { value: "zh-CN", label: "简体中文", flag: "🇨🇳" },
   { value: "zh-TW", label: "繁體中文", flag: "🇹🇼" },
 ];
+
+const noop = () => {};
 
 function SettingsPanel({
   children,
@@ -136,7 +158,11 @@ function SettingsPanelRow({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <div className={`px-4 py-3 ${className}`}>{children}</div>;
+  const { isCompact } = useSettingsLayout();
+
+  return (
+    <div className={`${isCompact ? "px-3 py-2.5" : "px-4 py-3"} ${className}`}>{children}</div>
+  );
 }
 
 function SectionHeader({ title, description }: { title: string; description?: string }) {
@@ -152,6 +178,7 @@ function SectionHeader({ title, description }: { title: string; description?: st
 
 interface TranscriptionSectionProps {
   isSignedIn: boolean;
+  startOnboarding: () => void;
   cloudTranscriptionMode: string;
   setCloudTranscriptionMode: (mode: string) => void;
   useLocalWhisper: boolean;
@@ -167,16 +194,14 @@ interface TranscriptionSectionProps {
   setWhisperModel: (model: string) => void;
   parakeetModel: string;
   setParakeetModel: (model: string) => void;
-  openaiApiKey: string;
-  setOpenaiApiKey: (key: string) => void;
-  groqApiKey: string;
-  setGroqApiKey: (key: string) => void;
-  mistralApiKey: string;
-  setMistralApiKey: (key: string) => void;
-  customTranscriptionApiKey: string;
-  setCustomTranscriptionApiKey: (key: string) => void;
   cloudTranscriptionBaseUrl?: string;
   setCloudTranscriptionBaseUrl: (url: string) => void;
+  transcriptionMode: InferenceMode;
+  setTranscriptionMode: (mode: InferenceMode) => void;
+  remoteTranscriptionUrl: string;
+  setRemoteTranscriptionUrl: (url: string) => void;
+  showTranscriptionPreview: boolean;
+  setShowTranscriptionPreview: (value: boolean) => void;
   toast: (opts: {
     title: string;
     description: string;
@@ -187,6 +212,7 @@ interface TranscriptionSectionProps {
 
 function TranscriptionSection({
   isSignedIn,
+  startOnboarding,
   cloudTranscriptionMode,
   setCloudTranscriptionMode,
   useLocalWhisper,
@@ -202,221 +228,155 @@ function TranscriptionSection({
   setWhisperModel,
   parakeetModel,
   setParakeetModel,
-  openaiApiKey,
-  setOpenaiApiKey,
-  groqApiKey,
-  setGroqApiKey,
-  mistralApiKey,
-  setMistralApiKey,
-  customTranscriptionApiKey,
-  setCustomTranscriptionApiKey,
   cloudTranscriptionBaseUrl,
   setCloudTranscriptionBaseUrl,
+  transcriptionMode,
+  setTranscriptionMode,
+  remoteTranscriptionUrl,
+  setRemoteTranscriptionUrl,
+  showTranscriptionPreview,
+  setShowTranscriptionPreview,
   toast,
 }: TranscriptionSectionProps) {
   const { t } = useTranslation();
-  const isCustomMode = cloudTranscriptionMode === "byok" || useLocalWhisper;
-  const isCloudMode = isSignedIn && cloudTranscriptionMode === "openwhispr" && !useLocalWhisper;
+
+  const transcriptionModes: InferenceModeOption[] = [
+    {
+      id: "openwhispr",
+      label: t("settingsPage.transcription.modes.openwhispr"),
+      description: t("settingsPage.transcription.modes.openwhisprDesc"),
+      icon: <Cloud className="w-4 h-4" />,
+      disabled: !isSignedIn,
+      badge: !isSignedIn ? t("common.freeAccountRequired") : undefined,
+    },
+    {
+      id: "providers",
+      label: t("settingsPage.transcription.modes.providers"),
+      description: t("settingsPage.transcription.modes.providersDesc"),
+      icon: <Key className="w-4 h-4" />,
+    },
+    {
+      id: "local",
+      label: t("settingsPage.transcription.modes.local"),
+      description: t("settingsPage.transcription.modes.localDesc"),
+      icon: <Cpu className="w-4 h-4" />,
+    },
+    {
+      id: "self-hosted",
+      label: t("settingsPage.transcription.modes.selfHosted"),
+      description: t("settingsPage.transcription.modes.selfHostedDesc"),
+      icon: <Network className="w-4 h-4" />,
+    },
+  ];
+
+  const handleTranscriptionModeSelect = (mode: InferenceMode) => {
+    if (mode === "openwhispr" && !isSignedIn) {
+      startOnboarding();
+      return;
+    }
+    if (mode === transcriptionMode) return;
+    setTranscriptionMode(mode);
+    setUseLocalWhisper(mode === "local");
+    updateTranscriptionSettings({ useLocalWhisper: mode === "local" });
+    setCloudTranscriptionMode(mode === "openwhispr" ? "openwhispr" : "byok");
+
+    const toastKey = {
+      openwhispr: "switchedCloud",
+      providers: "switchedProviders",
+      local: "switchedLocal",
+      "self-hosted": "switchedSelfHosted",
+    }[mode];
+    toast({
+      title: t(`settingsPage.transcription.toasts.${toastKey}.title`),
+      description: t(`settingsPage.transcription.toasts.${toastKey}.description`),
+      variant: "success",
+      duration: 3000,
+    });
+  };
+
+  const handleLocalModelSelect = useCallback(
+    (modelId: string) => {
+      if (localTranscriptionProvider === "nvidia") {
+        setParakeetModel(modelId);
+      } else {
+        setWhisperModel(modelId);
+      }
+    },
+    [localTranscriptionProvider, setParakeetModel, setWhisperModel]
+  );
+
+  const renderPreviewToggle = () => (
+    <SettingsPanel>
+      <SettingsPanelRow>
+        <SettingsRow
+          label={t("settingsPage.transcription.transcriptionPreview")}
+          description={t("settingsPage.transcription.transcriptionPreviewDescription")}
+        >
+          <Toggle checked={showTranscriptionPreview} onChange={setShowTranscriptionPreview} />
+        </SettingsRow>
+      </SettingsPanelRow>
+    </SettingsPanel>
+  );
+
+  const renderTranscriptionPicker = (mode?: "cloud" | "local") => (
+    <TranscriptionModelPicker
+      selectedCloudProvider={cloudTranscriptionProvider}
+      onCloudProviderSelect={setCloudTranscriptionProvider}
+      selectedCloudModel={cloudTranscriptionModel}
+      onCloudModelSelect={setCloudTranscriptionModel}
+      selectedLocalModel={localTranscriptionProvider === "nvidia" ? parakeetModel : whisperModel}
+      onLocalModelSelect={handleLocalModelSelect}
+      selectedLocalProvider={localTranscriptionProvider}
+      onLocalProviderSelect={setLocalTranscriptionProvider}
+      useLocalWhisper={mode === "local" || (!mode && useLocalWhisper)}
+      onModeChange={
+        mode
+          ? noop
+          : (isLocal) => {
+              setUseLocalWhisper(isLocal);
+              updateTranscriptionSettings({ useLocalWhisper: isLocal });
+              if (isLocal) setCloudTranscriptionMode("byok");
+            }
+      }
+      mode={mode}
+      cloudTranscriptionBaseUrl={cloudTranscriptionBaseUrl}
+      setCloudTranscriptionBaseUrl={setCloudTranscriptionBaseUrl}
+      variant="settings"
+    />
+  );
 
   return (
     <div className="space-y-4">
-      <SectionHeader
-        title={t("settingsPage.transcription.title")}
-        description={t("settingsPage.transcription.description")}
+      <InferenceModeSelector
+        modes={transcriptionModes}
+        activeMode={transcriptionMode}
+        onSelect={handleTranscriptionModeSelect}
       />
 
-      {/* Mode selector */}
-      {isSignedIn && (
-        <SettingsPanel>
-          <SettingsPanelRow>
-            <button
-              onClick={() => {
-                if (!isCloudMode) {
-                  setCloudTranscriptionMode("openwhispr");
-                  setUseLocalWhisper(false);
-                  updateTranscriptionSettings({ useLocalWhisper: false });
-                  toast({
-                    title: t("settingsPage.transcription.toasts.switchedCloud.title"),
-                    description: t("settingsPage.transcription.toasts.switchedCloud.description"),
-                    variant: "success",
-                    duration: 3000,
-                  });
-                }
-              }}
-              className="w-full flex items-center gap-3 text-left cursor-pointer group"
-            >
-              <div
-                className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 transition-colors ${
-                  isCloudMode
-                    ? "bg-primary/10 dark:bg-primary/15"
-                    : "bg-muted/60 dark:bg-surface-raised group-hover:bg-muted dark:group-hover:bg-surface-3"
-                }`}
-              >
-                <Cloud
-                  className={`w-4 h-4 transition-colors ${
-                    isCloudMode ? "text-primary" : "text-muted-foreground"
-                  }`}
-                />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-foreground">
-                    {t("settingsPage.transcription.openwhisprCloud")}
-                  </span>
-                  {isCloudMode && (
-                    <span className="text-xs font-medium text-primary bg-primary/10 dark:bg-primary/15 px-1.5 py-px rounded-sm">
-                      {t("common.active")}
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground/80 mt-0.5">
-                  {t("settingsPage.transcription.openwhisprCloudDescription")}
-                </p>
-              </div>
-              <div
-                className={`w-4 h-4 rounded-full border-2 shrink-0 transition-colors ${
-                  isCloudMode
-                    ? "border-primary bg-primary"
-                    : "border-border-hover dark:border-border-subtle"
-                }`}
-              >
-                {isCloudMode && (
-                  <div className="w-full h-full flex items-center justify-center">
-                    <div className="w-1.5 h-1.5 rounded-full bg-primary-foreground" />
-                  </div>
-                )}
-              </div>
-            </button>
-          </SettingsPanelRow>
-          <SettingsPanelRow>
-            <button
-              onClick={() => {
-                if (!isCustomMode) {
-                  setCloudTranscriptionMode("byok");
-                  setUseLocalWhisper(false);
-                  updateTranscriptionSettings({ useLocalWhisper: false });
-                  toast({
-                    title: t("settingsPage.transcription.toasts.switchedCustom.title"),
-                    description: t("settingsPage.transcription.toasts.switchedCustom.description"),
-                    variant: "success",
-                    duration: 3000,
-                  });
-                }
-              }}
-              className="w-full flex items-center gap-3 text-left cursor-pointer group"
-            >
-              <div
-                className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 transition-colors ${
-                  isCustomMode
-                    ? "bg-accent/10 dark:bg-accent/15"
-                    : "bg-muted/60 dark:bg-surface-raised group-hover:bg-muted dark:group-hover:bg-surface-3"
-                }`}
-              >
-                <Key
-                  className={`w-4 h-4 transition-colors ${
-                    isCustomMode ? "text-accent" : "text-muted-foreground"
-                  }`}
-                />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-foreground">
-                    {t("settingsPage.transcription.customSetup")}
-                  </span>
-                  {isCustomMode && (
-                    <span className="text-xs font-medium text-accent bg-accent/10 dark:bg-accent/15 px-1.5 py-px rounded-sm">
-                      {t("common.active")}
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground/80 mt-0.5">
-                  {t("settingsPage.transcription.customSetupDescription")}
-                </p>
-              </div>
-              <div
-                className={`w-4 h-4 rounded-full border-2 shrink-0 transition-colors ${
-                  isCustomMode
-                    ? "border-accent bg-accent"
-                    : "border-border-hover dark:border-border-subtle"
-                }`}
-              >
-                {isCustomMode && (
-                  <div className="w-full h-full flex items-center justify-center">
-                    <div className="w-1.5 h-1.5 rounded-full bg-accent-foreground" />
-                  </div>
-                )}
-              </div>
-            </button>
-          </SettingsPanelRow>
-        </SettingsPanel>
+      {transcriptionMode === "providers" && renderTranscriptionPicker("cloud")}
+      {transcriptionMode === "local" && (
+        <>
+          {renderTranscriptionPicker("local")}
+          {renderPreviewToggle()}
+        </>
       )}
 
-      {/* Custom Setup model picker — shown when Custom Setup is active or not signed in */}
-      {(isCustomMode || !isSignedIn) && (
-        <TranscriptionModelPicker
-          selectedCloudProvider={cloudTranscriptionProvider}
-          onCloudProviderSelect={setCloudTranscriptionProvider}
-          selectedCloudModel={cloudTranscriptionModel}
-          onCloudModelSelect={setCloudTranscriptionModel}
-          selectedLocalModel={
-            localTranscriptionProvider === "nvidia" ? parakeetModel : whisperModel
-          }
-          onLocalModelSelect={(modelId) => {
-            if (localTranscriptionProvider === "nvidia") {
-              setParakeetModel(modelId);
-            } else {
-              setWhisperModel(modelId);
-            }
-          }}
-          selectedLocalProvider={localTranscriptionProvider}
-          onLocalProviderSelect={setLocalTranscriptionProvider}
-          useLocalWhisper={useLocalWhisper}
-          onModeChange={(isLocal) => {
-            setUseLocalWhisper(isLocal);
-            updateTranscriptionSettings({ useLocalWhisper: isLocal });
-            if (isLocal) {
-              setCloudTranscriptionMode("byok");
-            }
-          }}
-          openaiApiKey={openaiApiKey}
-          setOpenaiApiKey={setOpenaiApiKey}
-          groqApiKey={groqApiKey}
-          setGroqApiKey={setGroqApiKey}
-          mistralApiKey={mistralApiKey}
-          setMistralApiKey={setMistralApiKey}
-          customTranscriptionApiKey={customTranscriptionApiKey}
-          setCustomTranscriptionApiKey={setCustomTranscriptionApiKey}
-          cloudTranscriptionBaseUrl={cloudTranscriptionBaseUrl}
-          setCloudTranscriptionBaseUrl={setCloudTranscriptionBaseUrl}
-          variant="settings"
+      {transcriptionMode === "self-hosted" && (
+        <SelfHostedPanel
+          service="transcription"
+          url={remoteTranscriptionUrl}
+          onUrlChange={setRemoteTranscriptionUrl}
         />
       )}
+
+      <GpuDeviceSelector purpose="transcription" />
     </div>
   );
 }
 
 interface AiModelsSectionProps {
-  isSignedIn: boolean;
-  cloudReasoningMode: string;
-  setCloudReasoningMode: (mode: string) => void;
-  useReasoningModel: boolean;
-  setUseReasoningModel: (value: boolean) => void;
-  reasoningModel: string;
-  setReasoningModel: (model: string) => void;
-  reasoningProvider: string;
-  setReasoningProvider: (provider: string) => void;
-  cloudReasoningBaseUrl: string;
-  setCloudReasoningBaseUrl: (url: string) => void;
-  openaiApiKey: string;
-  setOpenaiApiKey: (key: string) => void;
-  anthropicApiKey: string;
-  setAnthropicApiKey: (key: string) => void;
-  geminiApiKey: string;
-  setGeminiApiKey: (key: string) => void;
-  groqApiKey: string;
-  setGroqApiKey: (key: string) => void;
-  customReasoningApiKey: string;
-  setCustomReasoningApiKey: (key: string) => void;
+  useCleanupModel: boolean;
+  setUseCleanupModel: (value: boolean) => void;
   toast: (opts: {
     title: string;
     description: string;
@@ -425,206 +385,278 @@ interface AiModelsSectionProps {
   }) => void;
 }
 
-function AiModelsSection({
-  isSignedIn,
-  cloudReasoningMode,
-  setCloudReasoningMode,
-  useReasoningModel,
-  setUseReasoningModel,
-  reasoningModel,
-  setReasoningModel,
-  reasoningProvider,
-  setReasoningProvider,
-  cloudReasoningBaseUrl,
-  setCloudReasoningBaseUrl,
-  openaiApiKey,
-  setOpenaiApiKey,
-  anthropicApiKey,
-  setAnthropicApiKey,
-  geminiApiKey,
-  setGeminiApiKey,
-  groqApiKey,
-  setGroqApiKey,
-  customReasoningApiKey,
-  setCustomReasoningApiKey,
-  toast,
-}: AiModelsSectionProps) {
+const CLEANUP_MODE_TOAST_KEY: Record<InferenceMode, string> = {
+  openwhispr: "switchedCloud",
+  providers: "switchedProviders",
+  local: "switchedLocal",
+  "self-hosted": "switchedSelfHosted",
+  enterprise: "switchedEnterprise",
+};
+
+function NoteFormattingSettings() {
   const { t } = useTranslation();
-  const isCustomMode = cloudReasoningMode === "byok";
-  const isCloudMode = isSignedIn && cloudReasoningMode === "openwhispr";
+  const autoGenerateNoteTitle = useSettingsStore((s) => s.autoGenerateNoteTitle);
+  const setAutoGenerateNoteTitle = useSettingsStore((s) => s.setAutoGenerateNoteTitle);
 
   return (
     <div className="space-y-4">
-      <SectionHeader
-        title={t("settingsPage.aiModels.title")}
-        description={t("settingsPage.aiModels.description")}
-      />
+      <SettingsPanel>
+        <SettingsPanelRow>
+          <SettingsRow
+            label={t("settingsPage.noteFormatting.autoGenerateTitle")}
+            description={t("settingsPage.noteFormatting.autoGenerateTitleDescription")}
+          >
+            <Toggle checked={autoGenerateNoteTitle} onChange={setAutoGenerateNoteTitle} />
+          </SettingsRow>
+        </SettingsPanelRow>
+      </SettingsPanel>
+      <InferenceConfigEditor scope="noteFormatting" />
+    </div>
+  );
+}
 
-      {/* Enable toggle — always at top */}
+function AiModelsSection({ useCleanupModel, setUseCleanupModel, toast }: AiModelsSectionProps) {
+  const { t } = useTranslation();
+
+  const handleCleanupModeChange = (mode: InferenceMode) => {
+    const toastKey = CLEANUP_MODE_TOAST_KEY[mode];
+    toast({
+      title: t(`settingsPage.aiModels.toasts.${toastKey}.title`),
+      description: t(`settingsPage.aiModels.toasts.${toastKey}.description`),
+      variant: "success",
+      duration: 3000,
+    });
+  };
+
+  return (
+    <div className="space-y-4">
       <SettingsPanel>
         <SettingsPanelRow>
           <SettingsRow
             label={t("settingsPage.aiModels.enableTextCleanup")}
             description={t("settingsPage.aiModels.enableTextCleanupDescription")}
           >
-            <Toggle checked={useReasoningModel} onChange={setUseReasoningModel} />
+            <Toggle checked={useCleanupModel} onChange={setUseCleanupModel} />
           </SettingsRow>
         </SettingsPanelRow>
       </SettingsPanel>
 
-      {useReasoningModel && (
+      {useCleanupModel && (
         <>
-          {/* Mode selector */}
-          {isSignedIn && (
-            <SettingsPanel>
-              <SettingsPanelRow>
-                <button
-                  onClick={() => {
-                    if (!isCloudMode) {
-                      setCloudReasoningMode("openwhispr");
-                      window.electronAPI?.llamaServerStop?.();
-                      toast({
-                        title: t("settingsPage.aiModels.toasts.switchedCloud.title"),
-                        description: t("settingsPage.aiModels.toasts.switchedCloud.description"),
-                        variant: "success",
-                        duration: 3000,
-                      });
-                    }
-                  }}
-                  className="w-full flex items-center gap-3 text-left cursor-pointer group"
-                >
-                  <div
-                    className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 transition-colors ${
-                      isCloudMode
-                        ? "bg-primary/10 dark:bg-primary/15"
-                        : "bg-muted/60 dark:bg-surface-raised group-hover:bg-muted dark:group-hover:bg-surface-3"
-                    }`}
-                  >
-                    <Cloud
-                      className={`w-4 h-4 transition-colors ${
-                        isCloudMode ? "text-primary" : "text-muted-foreground"
-                      }`}
-                    />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-foreground">
-                        {t("settingsPage.aiModels.openwhisprCloud")}
-                      </span>
-                      {isCloudMode && (
-                        <span className="text-xs font-medium text-primary bg-primary/10 dark:bg-primary/15 px-1.5 py-px rounded-sm">
-                          {t("common.active")}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground/80 mt-0.5">
-                      {t("settingsPage.aiModels.openwhisprCloudDescription")}
-                    </p>
-                  </div>
-                  <div
-                    className={`w-4 h-4 rounded-full border-2 shrink-0 transition-colors ${
-                      isCloudMode
-                        ? "border-primary bg-primary"
-                        : "border-border-hover dark:border-border-subtle"
-                    }`}
-                  >
-                    {isCloudMode && (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <div className="w-1.5 h-1.5 rounded-full bg-primary-foreground" />
-                      </div>
-                    )}
-                  </div>
-                </button>
-              </SettingsPanelRow>
-              <SettingsPanelRow>
-                <button
-                  onClick={() => {
-                    if (!isCustomMode) {
-                      setCloudReasoningMode("byok");
-                      toast({
-                        title: t("settingsPage.aiModels.toasts.switchedCustom.title"),
-                        description: t("settingsPage.aiModels.toasts.switchedCustom.description"),
-                        variant: "success",
-                        duration: 3000,
-                      });
-                    }
-                  }}
-                  className="w-full flex items-center gap-3 text-left cursor-pointer group"
-                >
-                  <div
-                    className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 transition-colors ${
-                      isCustomMode
-                        ? "bg-accent/10 dark:bg-accent/15"
-                        : "bg-muted/60 dark:bg-surface-raised group-hover:bg-muted dark:group-hover:bg-surface-3"
-                    }`}
-                  >
-                    <Key
-                      className={`w-4 h-4 transition-colors ${
-                        isCustomMode ? "text-accent" : "text-muted-foreground"
-                      }`}
-                    />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-foreground">
-                        {t("settingsPage.aiModels.customSetup")}
-                      </span>
-                      {isCustomMode && (
-                        <span className="text-xs font-medium text-accent bg-accent/10 dark:bg-accent/15 px-1.5 py-px rounded-sm">
-                          {t("common.active")}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground/80 mt-0.5">
-                      {t("settingsPage.aiModels.customSetupDescription")}
-                    </p>
-                  </div>
-                  <div
-                    className={`w-4 h-4 rounded-full border-2 shrink-0 transition-colors ${
-                      isCustomMode
-                        ? "border-accent bg-accent"
-                        : "border-border-hover dark:border-border-subtle"
-                    }`}
-                  >
-                    {isCustomMode && (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <div className="w-1.5 h-1.5 rounded-full bg-accent-foreground" />
-                      </div>
-                    )}
-                  </div>
-                </button>
-              </SettingsPanelRow>
-            </SettingsPanel>
-          )}
-
-          {/* Custom Setup model picker — shown when Custom Setup is active or not signed in */}
-          {(isCustomMode || !isSignedIn) && (
-            <ReasoningModelSelector
-              reasoningModel={reasoningModel}
-              setReasoningModel={setReasoningModel}
-              localReasoningProvider={reasoningProvider}
-              setLocalReasoningProvider={setReasoningProvider}
-              cloudReasoningBaseUrl={cloudReasoningBaseUrl}
-              setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
-              openaiApiKey={openaiApiKey}
-              setOpenaiApiKey={setOpenaiApiKey}
-              anthropicApiKey={anthropicApiKey}
-              setAnthropicApiKey={setAnthropicApiKey}
-              geminiApiKey={geminiApiKey}
-              setGeminiApiKey={setGeminiApiKey}
-              groqApiKey={groqApiKey}
-              setGroqApiKey={setGroqApiKey}
-              customReasoningApiKey={customReasoningApiKey}
-              setCustomReasoningApiKey={setCustomReasoningApiKey}
-            />
-          )}
+          <InferenceConfigEditor scope="dictationCleanup" onModeChange={handleCleanupModeChange} />
+          <GpuDeviceSelector purpose="intelligence" />
         </>
       )}
     </div>
   );
 }
 
-export default function SettingsPage({ activeSection = "general" }: SettingsPageProps) {
+type SpeechTab = "dictation" | "noteRecording";
+type LlmTab = "dictationCleanup" | "dictationAgent" | "noteFormatting" | "chatIntelligence";
+
+const SPEECH_TABS: SpeechTab[] = ["dictation", "noteRecording"];
+const LLM_TABS: LlmTab[] = [
+  "dictationCleanup",
+  "dictationAgent",
+  "noteFormatting",
+  "chatIntelligence",
+];
+
+function useSubTab<T extends string>(storageKey: string, options: readonly T[], initial?: T) {
+  const [tab, setTab] = useLocalStorage<T>(storageKey, initial ?? options[0]);
+  useEffect(() => {
+    if (initial && initial !== tab) setTab(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial]);
+  const safeTab = options.includes(tab) ? tab : options[0];
+  return [safeTab, setTab] as const;
+}
+
+function VADLabelWithInfo({ label, description }: { label: string; description: string }) {
+  return (
+    <div className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
+      <span>{label}</span>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex items-center justify-center rounded-sm text-muted-foreground hover:text-foreground transition-colors"
+            aria-label={label}
+          >
+            <Info className="h-3.5 w-3.5" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent side="top" align="start" className="max-w-sm p-3">
+          <p className="text-xs leading-relaxed text-muted-foreground">{description}</p>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+function TabPanel({ active, children }: { active: boolean; children: React.ReactNode }) {
+  return <div className={active ? undefined : "hidden"}>{children}</div>;
+}
+
+function SpeechToTextTabs({
+  initialTab,
+  renderDictation,
+  renderNoteRecording,
+}: {
+  initialTab?: SpeechTab;
+  renderDictation: () => React.ReactNode;
+  renderNoteRecording: () => React.ReactNode;
+}) {
+  const { t } = useTranslation();
+  const [tab, setTab] = useSubTab<SpeechTab>("settings.speechToTextTab", SPEECH_TABS, initialTab);
+
+  const subTabs = [
+    { id: "dictation", name: t("settingsPage.speechToText.tabs.dictation") },
+    { id: "noteRecording", name: t("settingsPage.speechToText.tabs.noteRecording") },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <SectionHeader
+        title={t("settingsPage.speechToText.title")}
+        description={t("settingsPage.speechToText.description")}
+      />
+      <ProviderTabs
+        providers={subTabs}
+        selectedId={tab}
+        onSelect={(id) => setTab(id as SpeechTab)}
+        renderIcon={(id) =>
+          id === "dictation" ? (
+            <Mic className="w-3.5 h-3.5" />
+          ) : (
+            <FileAudio className="w-3.5 h-3.5" />
+          )
+        }
+      />
+      <TabPanel active={tab === "dictation"}>{renderDictation()}</TabPanel>
+      <TabPanel active={tab === "noteRecording"}>{renderNoteRecording()}</TabPanel>
+    </div>
+  );
+}
+
+function LlmsTabs({
+  initialTab,
+  renderDictationCleanup,
+  renderDictationAgent,
+  renderNoteFormatting,
+  renderChatIntelligence,
+}: {
+  initialTab?: LlmTab;
+  renderDictationCleanup: () => React.ReactNode;
+  renderDictationAgent: () => React.ReactNode;
+  renderNoteFormatting: () => React.ReactNode;
+  renderChatIntelligence: () => React.ReactNode;
+}) {
+  const { t } = useTranslation();
+  const [tab, setTab] = useSubTab<LlmTab>("settings.llmsTab", LLM_TABS, initialTab);
+
+  const subTabs = [
+    { id: "dictationCleanup", name: t("settingsPage.llms.tabs.dictationCleanup") },
+    { id: "dictationAgent", name: t("settingsPage.llms.tabs.dictationAgent") },
+    { id: "noteFormatting", name: t("settingsPage.llms.tabs.noteFormatting") },
+    { id: "chatIntelligence", name: t("settingsPage.llms.tabs.chatIntelligence") },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <SectionHeader
+        title={t("settingsPage.llms.title")}
+        description={t("settingsPage.llms.description")}
+      />
+      <ProviderTabs
+        providers={subTabs}
+        selectedId={tab}
+        onSelect={(id) => setTab(id as LlmTab)}
+        renderIcon={(id) => {
+          if (id === "dictationCleanup") return <Wand2 className="w-3.5 h-3.5" />;
+          if (id === "dictationAgent") return <Sparkles className="w-3.5 h-3.5" />;
+          if (id === "noteFormatting") return <BookOpen className="w-3.5 h-3.5" />;
+          return <MessageSquare className="w-3.5 h-3.5" />;
+        }}
+      />
+      <TabPanel active={tab === "dictationCleanup"}>{renderDictationCleanup()}</TabPanel>
+      <TabPanel active={tab === "dictationAgent"}>{renderDictationAgent()}</TabPanel>
+      <TabPanel active={tab === "noteFormatting"}>{renderNoteFormatting()}</TabPanel>
+      <TabPanel active={tab === "chatIntelligence"}>{renderChatIntelligence()}</TabPanel>
+    </div>
+  );
+}
+
+function GpuDeviceSelector({ purpose }: { purpose: "transcription" | "intelligence" }) {
+  const { t } = useTranslation();
+  const [gpus, setGpus] = useState<GpuDevice[]>([]);
+  const [selectedIndex, setSelectedIndex] = useState("0");
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      window.electronAPI?.listGpus?.() ?? Promise.resolve([]),
+      window.electronAPI?.getGpuDeviceIndex?.(purpose) ?? Promise.resolve("0"),
+    ])
+      .then(([gpuList, idx]) => {
+        setGpus(gpuList);
+        setSelectedIndex(idx);
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, [purpose]);
+
+  if (!loaded || gpus.length < 2) return null;
+
+  return (
+    <div className="border-t border-border/40 pt-4 mt-4">
+      <SectionHeader
+        title={t(`settingsPage.${purpose}.gpuDevice.title`)}
+        description={t(`settingsPage.${purpose}.gpuDevice.description`)}
+      />
+      <SettingsPanel>
+        <SettingsPanelRow>
+          <div className="relative w-full">
+            <select
+              value={selectedIndex}
+              onChange={async (e) => {
+                const idx = e.target.value;
+                setSelectedIndex(idx);
+                await window.electronAPI?.setGpuDeviceIndex?.(purpose, Number(idx));
+              }}
+              className="w-full appearance-none rounded-md border border-border bg-background px-3 pr-10 py-2 text-sm"
+            >
+              {gpus.map((gpu) => (
+                <option key={gpu.index} value={String(gpu.index)}>
+                  GPU {gpu.index}: {gpu.name} ({Math.round(gpu.vramMb / 1024)}GB)
+                </option>
+              ))}
+            </select>
+            <svg
+              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </div>
+        </SettingsPanelRow>
+      </SettingsPanel>
+    </div>
+  );
+}
+
+export default function SettingsPage({
+  activeSection = "general",
+  onNavigateToSection,
+  initialSubTab,
+}: SettingsPageProps) {
+  const { isCompact } = useSettingsLayout();
   const {
     confirmDialog,
     alertDialog,
@@ -644,15 +676,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     cloudTranscriptionProvider,
     cloudTranscriptionModel,
     cloudTranscriptionBaseUrl,
-    cloudReasoningBaseUrl,
-    useReasoningModel,
-    reasoningModel,
-    reasoningProvider,
-    openaiApiKey,
-    anthropicApiKey,
-    geminiApiKey,
-    groqApiKey,
-    mistralApiKey,
+    useCleanupModel,
     dictationKey,
     activationMode,
     setActivationMode,
@@ -668,32 +692,38 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     setCloudTranscriptionProvider,
     setCloudTranscriptionModel,
     setCloudTranscriptionBaseUrl,
-    setCloudReasoningBaseUrl,
-    setUseReasoningModel,
-    setReasoningModel,
-    setReasoningProvider,
-    setOpenaiApiKey,
-    setAnthropicApiKey,
-    setGeminiApiKey,
-    setGroqApiKey,
-    setMistralApiKey,
-    customTranscriptionApiKey,
-    setCustomTranscriptionApiKey,
-    customReasoningApiKey,
-    setCustomReasoningApiKey,
+    setUseCleanupModel,
     setDictationKey,
+    meetingKey,
+    setMeetingKey,
+    meetingHotkeyLayoutMode,
+    setMeetingHotkeyLayoutMode,
     autoLearnCorrections,
     setAutoLearnCorrections,
     updateTranscriptionSettings,
-    updateReasoningSettings,
+    updateCleanupSettings,
     cloudTranscriptionMode,
     setCloudTranscriptionMode,
-    cloudReasoningMode,
-    setCloudReasoningMode,
+    transcriptionMode,
+    setTranscriptionMode,
+    remoteTranscriptionUrl,
+    setRemoteTranscriptionUrl,
+    notificationsEnabled,
+    setNotificationsEnabled,
+    notifyMeetingDetection,
+    setNotifyMeetingDetection,
+    notifyCalendarReminders,
+    setNotifyCalendarReminders,
+    notifyUpdates,
+    setNotifyUpdates,
     audioCuesEnabled,
     setAudioCuesEnabled,
     pauseMediaOnDictation,
     setPauseMediaOnDictation,
+    showTranscriptionPreview,
+    setShowTranscriptionPreview,
+    autoPasteEnabled,
+    setAutoPasteEnabled,
     keepTranscriptionInClipboard,
     setKeepTranscriptionInClipboard,
     floatingIconAutoHide,
@@ -708,10 +738,36 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     setTelemetryEnabled,
     audioRetentionDays,
     setAudioRetentionDays,
+    dataRetentionEnabled,
+    setDataRetentionEnabled,
     customDictionary,
     setCustomDictionary,
+    noteFilesEnabled,
+    setNoteFilesEnabled,
+    noteFilesPath,
+    setNoteFilesPath,
+    dictationSileroEnabled,
+    setDictationSileroEnabled,
+    noteRecordingSileroEnabled,
+    setNoteRecordingSileroEnabled,
+    meetingSileroEnabled,
+    setMeetingSileroEnabled,
+    whisperVadThreshold,
+    setWhisperVadThreshold,
+    whisperVadMinSpeechDurationMs,
+    setWhisperVadMinSpeechDurationMs,
+    whisperVadMinSilenceDurationMs,
+    setWhisperVadMinSilenceDurationMs,
+    whisperVadMaxSpeechDurationS,
+    setWhisperVadMaxSpeechDurationS,
+    whisperVadSpeechPadMs,
+    setWhisperVadSpeechPadMs,
+    whisperVadSamplesOverlap,
+    setWhisperVadSamplesOverlap,
   } = useSettings();
 
+  const chatAgentKey = useSettingsStore((s) => s.chatAgentKey);
+  const setChatAgentKey = useSettingsStore((s) => s.setChatAgentKey);
   const meetingAudioDetection = useSettingsStore((s) => s.meetingAudioDetection);
   const setMeetingAudioDetection = useSettingsStore((s) => s.setMeetingAudioDetection);
 
@@ -737,6 +793,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     installUpdate: installUpdateAction,
     getAppVersion,
     error: updateError,
+    clearError: clearUpdateError,
   } = useUpdater();
 
   const isUpdateAvailable =
@@ -744,12 +801,10 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
 
   const migration = useMigration();
 
-  const whisperHook = useWhisper();
+  const { checkWhisperInstallation } = useWhisper();
   const permissionsHook = usePermissions(showAlertDialog);
-  const screenRecording = useScreenRecordingPermission();
+  const systemAudio = useSystemAudioPermission();
   useClipboard(showAlertDialog);
-  const { agentName, setAgentName } = useAgentName();
-  const [agentNameInput, setAgentNameInput] = useState(agentName);
   const [audioStorageUsage, setAudioStorageUsage] = useState<{
     fileCount: number;
     totalBytes: number;
@@ -764,6 +819,21 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
       })
       .catch(() => {});
   }, [activeSection]);
+
+  // Lazy keep-alive: mount AI sections only after the user has visited them once,
+  // then keep them mounted so model-download progress and IPC listeners survive
+  // section switches. The setState-during-render pattern flips the flag in the
+  // same commit as the section change, so there's no blank frame on first visit.
+  const [hasMountedSpeechToText, setHasMountedSpeechToText] = useState(
+    activeSection === "speechToText"
+  );
+  const [hasMountedLlms, setHasMountedLlms] = useState(activeSection === "llms");
+  if (activeSection === "speechToText" && !hasMountedSpeechToText) {
+    setHasMountedSpeechToText(true);
+  }
+  if (activeSection === "llms" && !hasMountedLlms) {
+    setHasMountedLlms(true);
+  }
 
   const handleClearAllAudio = async () => {
     if (!window.electronAPI?.deleteAllAudio) return;
@@ -788,6 +858,9 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     hasUdevRule: boolean;
     hasGroup: boolean;
     allGood: boolean;
+    isKde?: boolean;
+    hasXclip?: boolean;
+    hasXsel?: boolean;
   } | null>(null);
   const [ydotoolGuideKey, setYdotoolGuideKey] = useState<string | null>(null);
 
@@ -801,38 +874,6 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
   useEffect(() => {
     refreshYdotoolStatus();
   }, [refreshYdotoolStatus]);
-
-  const handleSaveAgentName = useCallback(() => {
-    const trimmed = agentNameInput.trim();
-    const previousName = agentName;
-
-    setAgentName(trimmed);
-    setAgentNameInput(trimmed);
-
-    let nextDictionary = customDictionary.filter((w) => w !== previousName);
-    if (trimmed) {
-      const hasName = nextDictionary.some((w) => w.toLowerCase() === trimmed.toLowerCase());
-      if (!hasName) {
-        nextDictionary = [trimmed, ...nextDictionary];
-      }
-    }
-    setCustomDictionary(nextDictionary);
-
-    showAlertDialog({
-      title: t("settingsPage.agentConfig.dialogs.updatedTitle"),
-      description: t("settingsPage.agentConfig.dialogs.updatedDescription", {
-        name: trimmed,
-      }),
-    });
-  }, [
-    agentNameInput,
-    agentName,
-    customDictionary,
-    setAgentName,
-    setCustomDictionary,
-    showAlertDialog,
-    t,
-  ]);
 
   const { theme, setTheme } = useTheme();
   const usage = useUsage();
@@ -862,12 +903,64 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     showAlert: showAlertDialog,
   });
 
-  const validateHotkeyForInput = useCallback(
-    (hotkey: string) => getValidationMessage(hotkey, getPlatform()),
-    []
+  const meetingRegisterFn = useCallback(async (hotkey: string) => {
+    const result = await window.electronAPI?.registerMeetingHotkey?.(hotkey);
+    return result ?? { success: false, message: "Electron API unavailable" };
+  }, []);
+
+  const { registerHotkey: registerMeetingHotkey, isRegistering: isMeetingHotkeyRegistering } =
+    useHotkeyRegistration({
+      onSuccess: (registeredHotkey) => {
+        setMeetingKey(registeredHotkey);
+      },
+      showSuccessToast: false,
+      showErrorToast: true,
+      showAlert: showAlertDialog,
+      registerFn: meetingRegisterFn,
+    });
+
+  const validateDictationHotkey = useCallback(
+    (hotkey: string) =>
+      validateHotkeyForSlot(
+        hotkey,
+        {
+          "settingsPage.general.meetingHotkey.title": meetingKey,
+          "agentMode.settings.hotkey": chatAgentKey,
+        },
+        t
+      ),
+    [meetingKey, chatAgentKey, t]
+  );
+
+  const validateMeetingHotkey = useCallback(
+    (hotkey: string) =>
+      validateHotkeyForSlot(
+        hotkey,
+        {
+          "settingsPage.general.hotkey.title": dictationKey,
+          "agentMode.settings.hotkey": chatAgentKey,
+        },
+        t
+      ),
+    [dictationKey, chatAgentKey, t]
+  );
+
+  const validateAgentHotkey = useCallback(
+    (hotkey: string) =>
+      validateHotkeyForSlot(
+        hotkey,
+        {
+          "settingsPage.general.hotkey.title": dictationKey,
+          "settingsPage.general.meetingHotkey.title": meetingKey,
+        },
+        t
+      ),
+    [dictationKey, meetingKey, t]
   );
 
   const [isUsingNativeShortcut, setIsUsingNativeShortcut] = useState(false);
+  const [effectiveDefaultHotkey, setEffectiveDefaultHotkey] = useState<string | null>(null);
+  const [linuxPttAvailable, setLinuxPttAvailable] = useState(true);
 
   const platform = getCachedPlatform();
 
@@ -893,6 +986,15 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     loadAutoStart();
   }, [platform]);
 
+  useEffect(() => {
+    window.electronAPI?.syncNotificationPreferences?.({
+      notificationsEnabled,
+      notifyMeetingDetection,
+      notifyCalendarReminders,
+      notifyUpdates,
+    });
+  }, [notificationsEnabled, notifyMeetingDetection, notifyCalendarReminders, notifyUpdates]);
+
   const handleAutoStartChange = async (enabled: boolean) => {
     if (window.electronAPI?.setAutoStartEnabled) {
       try {
@@ -909,6 +1011,47 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     }
   };
 
+  const [noteFilesDefaultPath, setNoteFilesDefaultPath] = useState("");
+  const [noteFilesRebuilding, setNoteFilesRebuilding] = useState(false);
+
+  useEffect(() => {
+    if (!noteFilesEnabled) return;
+    window.electronAPI?.noteFilesGetDefaultPath?.().then((p) => {
+      if (p) setNoteFilesDefaultPath(p);
+    });
+  }, [noteFilesEnabled]);
+
+  const handleNoteFilesToggle = useCallback(
+    async (enabled: boolean) => {
+      setNoteFilesEnabled(enabled);
+      await window.electronAPI?.noteFilesSetEnabled?.(enabled, noteFilesPath || undefined);
+    },
+    [setNoteFilesEnabled, noteFilesPath]
+  );
+
+  const handleNoteFilesChangePath = useCallback(async () => {
+    const result = await window.electronAPI?.noteFilesPickFolder?.();
+    if (result?.canceled || !result?.path) return;
+    setNoteFilesPath(result.path);
+    await window.electronAPI?.noteFilesSetPath?.(result.path);
+  }, [setNoteFilesPath]);
+
+  const handleNoteFilesRebuild = useCallback(async () => {
+    setNoteFilesRebuilding(true);
+    try {
+      const result = await window.electronAPI?.noteFilesRebuild?.();
+      if (result && !result.success) {
+        toast({
+          title: t("settings.noteFiles.rebuildError.title"),
+          description: result.error || t("settings.noteFiles.rebuildError.description"),
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setNoteFilesRebuilding(false);
+    }
+  }, [toast, t]);
+
   useEffect(() => {
     let mounted = true;
 
@@ -919,7 +1062,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
       if (version && mounted) setCurrentVersion(version);
 
       if (mounted) {
-        whisperHook.checkWhisperInstallation();
+        checkWhisperInstallation();
       }
     }, 100);
 
@@ -927,7 +1070,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
       mounted = false;
       clearTimeout(timer);
     };
-  }, [whisperHook.checkWhisperInstallation, getAppVersion]);
+  }, [checkWhisperInstallation, getAppVersion]);
 
   useEffect(() => {
     const checkHotkeyMode = async () => {
@@ -935,14 +1078,36 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
         const info = await window.electronAPI?.getHotkeyModeInfo();
         if (info?.isUsingNativeShortcut) {
           setIsUsingNativeShortcut(true);
-          setActivationMode("tap");
+          if (!info.supportsPushToTalk) {
+            setActivationMode("tap");
+          }
         }
       } catch (error) {
         logger.error("Failed to check hotkey mode", error, "settings");
       }
+      try {
+        const key = await window.electronAPI?.getEffectiveDefaultHotkey?.();
+        if (key) setEffectiveDefaultHotkey(key);
+      } catch (error) {
+        logger.error("Failed to get effective default hotkey", error, "settings");
+      }
     };
     checkHotkeyMode();
   }, [setActivationMode]);
+
+  useEffect(() => {
+    const cleanup = window.electronAPI?.onLinuxPttPermissionDenied?.(() => {
+      setLinuxPttAvailable(false);
+      toast({
+        title: t("settingsPage.general.hotkey.linuxPttPermissionTitle"),
+        description: t("settingsPage.general.hotkey.linuxPttPermissionDescription"),
+        variant: "destructive",
+        duration: 15000,
+      });
+      setActivationMode("tap");
+    });
+    return () => cleanup?.();
+  }, [toast, t, setActivationMode]);
 
   useEffect(() => {
     if (updateError) {
@@ -950,8 +1115,9 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
         title: t("settingsPage.general.updates.dialogs.updateError.title"),
         description: t("settingsPage.general.updates.dialogs.updateError.description"),
       });
+      clearUpdateError();
     }
-  }, [updateError, showAlertDialog, t]);
+  }, [updateError, showAlertDialog, clearUpdateError, t]);
 
   useEffect(() => {
     if (installInitiated) {
@@ -984,7 +1150,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
       title: t("settingsPage.permissions.resetAccessibility.title"),
       description: message,
       onConfirm: () => {
-        permissionsHook.openAccessibilitySettings();
+        permissionsHook.requestAccessibilityPermission();
       },
     });
   };
@@ -1037,11 +1203,13 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
 
   const { isSignedIn, isLoaded, user } = useAuth();
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isOpeningBilling, setIsOpeningBilling] = useState(false);
   const [billingState, setBillingState] = useState<Record<string, boolean>>({
     pro: true,
     business: true,
   });
+  const [checkoutTier, setCheckoutTier] = useState<string | null>(null);
   const [switchPreview, setSwitchPreview] = useState<{
     plan: "monthly" | "annual";
     tier: "pro" | "business";
@@ -1120,7 +1288,9 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
 
   const handleCheckout = useCallback(
     async (plan: "monthly" | "annual", tier: "pro" | "business") => {
+      setCheckoutTier(tier);
       const result = await usage.openCheckout({ plan, tier });
+      setCheckoutTier(null);
       if (!result.success) {
         toast({
           title: t("settingsPage.account.checkout.couldNotOpenTitle"),
@@ -1147,12 +1317,178 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     }
   }, [showAlertDialog, t]);
 
+  const handleDeleteAccount = useCallback(() => {
+    showConfirmDialog({
+      title: t("settingsPage.account.deleteAccount.title"),
+      description: t("settingsPage.account.deleteAccount.description"),
+      onConfirm: async () => {
+        setIsDeletingAccount(true);
+        try {
+          // Best-effort cloud cleanup (needs session cookies before sign-out)
+          try {
+            const { NotesService } = await import("../services/NotesService");
+            await NotesService.deleteAll();
+          } catch {}
+
+          const result = await deleteAccount();
+          if (result.error) {
+            logger.error("Server account deletion failed", result.error, "auth");
+          }
+
+          try {
+            await signOut();
+          } catch {}
+          await window.electronAPI?.cleanupApp();
+
+          showAlertDialog({
+            title: t("settingsPage.account.deleteAccount.successTitle"),
+            description: t("settingsPage.account.deleteAccount.successDescription"),
+          });
+          setTimeout(() => window.location.reload(), 1000);
+        } catch (error) {
+          logger.error("Account deletion failed", error, "auth");
+          showAlertDialog({
+            title: t("settingsPage.account.deleteAccount.failedTitle"),
+            description: t("settingsPage.account.deleteAccount.failedDescription"),
+          });
+        } finally {
+          setIsDeletingAccount(false);
+        }
+      },
+      variant: "destructive",
+      confirmText: t("settingsPage.account.deleteAccount.confirmText"),
+    });
+  }, [showConfirmDialog, showAlertDialog, t]);
+
+  const renderWhisperVadSettings = () => (
+    <div>
+      <SectionHeader
+        title={t("settingsPage.transcription.vad.title")}
+        description={t("settingsPage.transcription.vad.description")}
+      />
+      <SettingsPanel>
+        <SettingsPanelRow>
+          <SettingsRow
+            label={t("settingsPage.transcription.vad.toggles.dictation.title")}
+            description={t("settingsPage.transcription.vad.toggles.dictation.description")}
+          >
+            <Toggle checked={dictationSileroEnabled} onChange={setDictationSileroEnabled} />
+          </SettingsRow>
+        </SettingsPanelRow>
+        <SettingsPanelRow>
+          <SettingsRow
+            label={t("settingsPage.transcription.vad.toggles.noteRecording.title")}
+            description={t("settingsPage.transcription.vad.toggles.noteRecording.description")}
+          >
+            <Toggle checked={noteRecordingSileroEnabled} onChange={setNoteRecordingSileroEnabled} />
+          </SettingsRow>
+        </SettingsPanelRow>
+        <SettingsPanelRow>
+          <SettingsRow
+            label={t("settingsPage.transcription.vad.toggles.meeting.title")}
+            description={t("settingsPage.transcription.vad.toggles.meeting.description")}
+          >
+            <Toggle checked={meetingSileroEnabled} onChange={setMeetingSileroEnabled} />
+          </SettingsRow>
+        </SettingsPanelRow>
+        <SettingsPanelRow>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.vad.fields.threshold.label")}
+                description={t("settingsPage.transcription.vad.fields.threshold.info")}
+              />
+              <Input
+                type="number"
+                step="0.01"
+                min="0.1"
+                max="0.95"
+                value={whisperVadThreshold}
+                onChange={(e) => setWhisperVadThreshold(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.vad.fields.minSpeechDurationMs.label")}
+                description={t("settingsPage.transcription.vad.fields.minSpeechDurationMs.info")}
+              />
+              <Input
+                type="number"
+                step="10"
+                min="50"
+                max="2000"
+                value={whisperVadMinSpeechDurationMs}
+                onChange={(e) => setWhisperVadMinSpeechDurationMs(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.vad.fields.minSilenceDurationMs.label")}
+                description={t("settingsPage.transcription.vad.fields.minSilenceDurationMs.info")}
+              />
+              <Input
+                type="number"
+                step="10"
+                min="50"
+                max="2000"
+                value={whisperVadMinSilenceDurationMs}
+                onChange={(e) => setWhisperVadMinSilenceDurationMs(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.vad.fields.maxSpeechDurationS.label")}
+                description={t("settingsPage.transcription.vad.fields.maxSpeechDurationS.info")}
+              />
+              <Input
+                type="number"
+                step="1"
+                min="5"
+                max="120"
+                value={whisperVadMaxSpeechDurationS}
+                onChange={(e) => setWhisperVadMaxSpeechDurationS(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.vad.fields.speechPadMs.label")}
+                description={t("settingsPage.transcription.vad.fields.speechPadMs.info")}
+              />
+              <Input
+                type="number"
+                step="10"
+                min="0"
+                max="1000"
+                value={whisperVadSpeechPadMs}
+                onChange={(e) => setWhisperVadSpeechPadMs(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <VADLabelWithInfo
+                label={t("settingsPage.transcription.vad.fields.samplesOverlap.label")}
+                description={t("settingsPage.transcription.vad.fields.samplesOverlap.info")}
+              />
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                max="0.95"
+                value={whisperVadSamplesOverlap}
+                onChange={(e) => setWhisperVadSamplesOverlap(Number(e.target.value))}
+              />
+            </div>
+          </div>
+        </SettingsPanelRow>
+      </SettingsPanel>
+    </div>
+  );
+
   const renderSectionContent = () => {
     switch (activeSection) {
       case "account":
         return (
           <div className="space-y-5">
-            {!NEON_AUTH_URL ? (
+            {!AUTH_URL ? (
               <>
                 <SectionHeader
                   title={t("settingsPage.account.title")}
@@ -1213,6 +1549,28 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                     </Button>
                   </SettingsPanelRow>
                 </SettingsPanel>
+
+                <SettingsPanel>
+                  <SettingsPanelRow>
+                    <SettingsRow
+                      label={t("settingsPage.account.deleteAccount.label")}
+                      description={t("settingsPage.account.deleteAccount.labelDescription")}
+                    >
+                      <Button
+                        onClick={handleDeleteAccount}
+                        variant="outline"
+                        disabled={isDeletingAccount}
+                        size="sm"
+                        className="text-destructive border-destructive/30 hover:bg-destructive/10 hover:border-destructive"
+                      >
+                        <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                        {isDeletingAccount
+                          ? t("settingsPage.account.deleteAccount.deleting")
+                          : t("settingsPage.account.deleteAccount.button")}
+                      </Button>
+                    </SettingsRow>
+                  </SettingsPanelRow>
+                </SettingsPanel>
               </>
             ) : isLoaded ? (
               <>
@@ -1269,7 +1627,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
       case "plansBilling":
         return (
           <div className="space-y-5">
-            {!NEON_AUTH_URL ? (
+            {!AUTH_URL ? (
               <>
                 <SectionHeader
                   title={t("settingsPage.account.pricing.title")}
@@ -1289,7 +1647,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
             ) : isLoaded ? (
               <>
                 <SectionHeader title={t("settingsPage.account.pricing.title")} />
-                <div className="grid grid-cols-4 gap-1.5">
+                <div className={`grid gap-1.5 ${isCompact ? "grid-cols-2" : "grid-cols-4"}`}>
                   {/* Free */}
                   <div
                     className={cn(
@@ -1315,15 +1673,24 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                         t("settingsPage.account.pricing.free.features", {
                           returnObjects: true,
                         }) as string[]
-                      ).map((feature, i) => (
-                        <li
-                          key={i}
-                          className="flex items-start gap-1 text-[10px] text-muted-foreground leading-tight"
-                        >
-                          <Check size={9} className="mt-[2px] text-primary/70 shrink-0" />
-                          {feature}
-                        </li>
-                      ))}
+                      ).map((feature, i) =>
+                        feature.startsWith("## ") ? (
+                          <li
+                            key={i}
+                            className={`text-[8px] font-semibold uppercase tracking-wide text-muted-foreground/60 ${i > 0 ? "pt-1.5" : ""}`}
+                          >
+                            {feature.slice(3)}
+                          </li>
+                        ) : (
+                          <li
+                            key={i}
+                            className="flex items-start gap-1 text-[10px] text-muted-foreground leading-tight"
+                          >
+                            <Check size={9} className="mt-[2px] text-primary/70 shrink-0" />
+                            {feature}
+                          </li>
+                        )
+                      )}
                     </ul>
                     {!isSignedIn ? (
                       <Button
@@ -1437,11 +1804,15 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                         onClick={() =>
                           handleCheckout(billingState.pro ? "annual" : "monthly", "pro")
                         }
-                        disabled={usage?.checkoutLoading}
+                        disabled={checkoutTier === "pro"}
                         size="sm"
                         className="mt-2 w-full h-6 text-[10px]"
                       >
-                        {t("settingsPage.account.pricing.pro.cta")}
+                        {checkoutTier === "pro" ? (
+                          <Loader2 size={10} className="animate-spin" />
+                        ) : (
+                          t("settingsPage.account.pricing.pro.cta")
+                        )}
                       </Button>
                     )}
                   </div>
@@ -1527,11 +1898,15 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                         onClick={() =>
                           handleCheckout(billingState.business ? "annual" : "monthly", "business")
                         }
-                        disabled={usage?.checkoutLoading}
+                        disabled={checkoutTier === "business"}
                         size="sm"
                         className="mt-2 w-full h-6 text-[10px]"
                       >
-                        {t("settingsPage.account.pricing.business.cta")}
+                        {checkoutTier === "business" ? (
+                          <Loader2 size={10} className="animate-spin" />
+                        ) : (
+                          t("settingsPage.account.pricing.business.cta")
+                        )}
                       </Button>
                     )}
                   </div>
@@ -1588,7 +1963,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   open={!!switchPreview}
                   onOpenChange={(open) => !open && setSwitchPreview(null)}
                 >
-                  <DialogContent className="sm:max-w-[360px]">
+                  <DialogContent className="sm:max-w-90">
                     <DialogHeader>
                       <DialogTitle>
                         {t("settingsPage.account.pricing.confirmSwitch.title")}
@@ -1864,10 +2239,12 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                           ) : (
                             <Button
                               onClick={async () => {
+                                setCheckoutTier("plan-upgrade");
                                 const result = await usage.openCheckout({
                                   plan: billingState.pro ? "annual" : "monthly",
                                   tier: "pro",
                                 });
+                                setCheckoutTier(null);
                                 if (!result.success) {
                                   toast({
                                     title: t("settingsPage.account.checkout.couldNotOpenTitle"),
@@ -1880,9 +2257,9 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                               }}
                               size="sm"
                               className="w-full"
-                              disabled={usage.checkoutLoading}
+                              disabled={checkoutTier === "plan-upgrade"}
                             >
-                              {usage.checkoutLoading
+                              {checkoutTier === "plan-upgrade"
                                 ? t("settingsPage.account.checkout.opening")
                                 : t("settingsPage.account.checkout.upgradeToPro")}
                             </Button>
@@ -1908,6 +2285,9 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
             )}
           </div>
         );
+
+      case "workspace":
+        return WORKSPACES_ENABLED ? <WorkspaceSection initialSubTab={initialSubTab} /> : null;
 
       case "general":
         return (
@@ -1994,6 +2374,67 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
               </SettingsPanel>
             </div>
 
+            {/* Notifications */}
+            <div>
+              <SectionHeader
+                title={t("settingsPage.general.notifications.title")}
+                description={t("settingsPage.general.notifications.description")}
+              />
+              <SettingsPanel>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.general.notifications.disableAll")}
+                    description={t("settingsPage.general.notifications.disableAllDescription")}
+                  >
+                    <Toggle
+                      checked={!notificationsEnabled}
+                      onChange={(v) => setNotificationsEnabled(!v)}
+                    />
+                  </SettingsRow>
+                </SettingsPanelRow>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.general.notifications.meetingDetection")}
+                    description={t(
+                      "settingsPage.general.notifications.meetingDetectionDescription"
+                    )}
+                  >
+                    <Toggle
+                      checked={notifyMeetingDetection}
+                      onChange={setNotifyMeetingDetection}
+                      disabled={!notificationsEnabled}
+                    />
+                  </SettingsRow>
+                </SettingsPanelRow>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.general.notifications.calendarReminders")}
+                    description={t(
+                      "settingsPage.general.notifications.calendarRemindersDescription"
+                    )}
+                  >
+                    <Toggle
+                      checked={notifyCalendarReminders}
+                      onChange={setNotifyCalendarReminders}
+                      disabled={!notificationsEnabled}
+                    />
+                  </SettingsRow>
+                </SettingsPanelRow>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.general.notifications.updates")}
+                    description={t("settingsPage.general.notifications.updatesDescription")}
+                  >
+                    <Toggle
+                      checked={notifyUpdates}
+                      onChange={setNotifyUpdates}
+                      disabled={!notificationsEnabled}
+                    />
+                  </SettingsRow>
+                </SettingsPanelRow>
+              </SettingsPanel>
+            </div>
+
             {/* Meeting Detection */}
             <div>
               <SectionHeader
@@ -2026,6 +2467,14 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
               <SettingsPanel>
                 <SettingsPanelRow>
                   <SettingsRow
+                    label={t("settingsPage.general.clipboard.autoPaste")}
+                    description={t("settingsPage.general.clipboard.autoPasteDescription")}
+                  >
+                    <Toggle checked={autoPasteEnabled} onChange={setAutoPasteEnabled} />
+                  </SettingsRow>
+                </SettingsPanelRow>
+                <SettingsPanelRow>
+                  <SettingsRow
                     label={t("settingsPage.general.clipboard.keepInClipboard")}
                     description={t("settingsPage.general.clipboard.keepInClipboardDescription")}
                   >
@@ -2035,6 +2484,60 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                     />
                   </SettingsRow>
                 </SettingsPanelRow>
+              </SettingsPanel>
+            </div>
+
+            {/* Save Notes as Files */}
+            <div>
+              <SectionHeader title={t("settings.noteFiles.title")} />
+              <SettingsPanel>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settings.noteFiles.title")}
+                    description={t("settings.noteFiles.description")}
+                  >
+                    <Toggle checked={noteFilesEnabled} onChange={handleNoteFilesToggle} />
+                  </SettingsRow>
+                </SettingsPanelRow>
+                {noteFilesEnabled && (
+                  <>
+                    <SettingsPanelRow>
+                      <SettingsRow
+                        label={t("settings.noteFiles.path")}
+                        description={noteFilesPath || noteFilesDefaultPath || "..."}
+                      >
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={handleNoteFilesChangePath}
+                        >
+                          {t("settings.noteFiles.changePath")}
+                        </Button>
+                      </SettingsRow>
+                    </SettingsPanelRow>
+                    <SettingsPanelRow>
+                      <SettingsRow
+                        label={t("settings.noteFiles.rebuild")}
+                        description={t("settings.noteFiles.rebuildDescription")}
+                      >
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          disabled={noteFilesRebuilding}
+                          onClick={handleNoteFilesRebuild}
+                        >
+                          {noteFilesRebuilding ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            t("settings.noteFiles.rebuild")
+                          )}
+                        </Button>
+                      </SettingsRow>
+                    </SettingsPanelRow>
+                  </>
+                )}
               </SettingsPanel>
             </div>
 
@@ -2225,6 +2728,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                           cmds: [
                             { label: "Ubuntu / Pop!_OS / Debian", cmd: "sudo apt install ydotool" },
                             { label: "Fedora", cmd: "sudo dnf install ydotool" },
+                            { label: "Arch Linux", cmd: "sudo pacman -S ydotool" },
                             { label: "openSUSE", cmd: "sudo zypper install ydotool" },
                           ],
                         },
@@ -2261,6 +2765,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                               cmd: "sudo apt install ydotoold",
                             },
                             { label: "Fedora", cmd: "# Already included in the ydotool package" },
+                            { label: "Arch Linux", cmd: "# Included in the ydotool package" },
                           ],
                         },
                       ],
@@ -2465,17 +2970,49 @@ EOF`,
                             {
                               cmd: "systemctl --user enable ydotoold && systemctl --user start ydotoold",
                             },
+                            {
+                              label: "Arch Linux (service is named ydotool.service)",
+                              cmd: "systemctl --user enable --now ydotool.service",
+                            },
                           ],
                         },
                         {
                           title: t("settingsPage.general.waylandPaste.guide.daemon.step2Title", {
                             defaultValue: "Verify it's running",
                           }),
-                          cmds: [{ cmd: "systemctl --user status ydotoold" }],
+                          cmds: [
+                            { cmd: "systemctl --user status ydotoold" },
+                            {
+                              label: "Arch Linux",
+                              cmd: "systemctl --user status ydotool.service",
+                            },
+                          ],
                         },
                       ],
                     },
                   ];
+
+                  if (ydotoolStatus.isKde) {
+                    checks.push({
+                      key: "hasXclip",
+                      label: "xclip",
+                      ok: ydotoolStatus.hasXclip || ydotoolStatus.hasXsel || false,
+                      desc: t("settingsPage.general.waylandPaste.xclipDesc", {
+                        defaultValue: "Clipboard tool for KDE Wayland paste (xclip or xsel)",
+                      }),
+                      steps: [
+                        {
+                          title: t("settingsPage.general.waylandPaste.guide.xclip.step1Title", {
+                            defaultValue: "Install xclip",
+                          }),
+                          cmds: [
+                            { cmd: "sudo dnf install xclip  # Fedora" },
+                            { cmd: "sudo apt install xclip  # Debian/Ubuntu" },
+                          ],
+                        },
+                      ],
+                    });
+                  }
 
                   const allOk = checks.every((c) => c.ok);
                   const activeGuide = checks.find((c) => c.key === ydotoolGuideKey);
@@ -2647,348 +3184,128 @@ EOF`,
                       await registerHotkey(newHotkey);
                     }}
                     disabled={isHotkeyRegistering}
-                    validate={validateHotkeyForInput}
+                    validate={validateDictationHotkey}
                   />
-                  {dictationKey && dictationKey !== getDefaultHotkey() && (
-                    <button
-                      onClick={() => registerHotkey(getDefaultHotkey())}
-                      disabled={isHotkeyRegistering}
-                      className="mt-2 text-xs text-muted-foreground/70 hover:text-foreground transition-colors disabled:opacity-50"
-                    >
-                      {t("settingsPage.general.hotkey.resetToDefault", {
-                        hotkey: formatHotkeyLabel(getDefaultHotkey()),
-                      })}
-                    </button>
-                  )}
+                  {effectiveDefaultHotkey &&
+                    dictationKey &&
+                    dictationKey !== effectiveDefaultHotkey && (
+                      <button
+                        onClick={() => registerHotkey(effectiveDefaultHotkey)}
+                        disabled={isHotkeyRegistering}
+                        className="mt-2 text-xs text-muted-foreground/70 hover:text-foreground transition-colors disabled:opacity-50"
+                      >
+                        {t("settingsPage.general.hotkey.resetToDefault", {
+                          hotkey: formatHotkeyLabel(effectiveDefaultHotkey),
+                        })}
+                      </button>
+                    )}
                 </SettingsPanelRow>
 
-                {!isUsingNativeShortcut && (
+                {(!isUsingNativeShortcut || getCachedPlatform() === "linux") && (
                   <SettingsPanelRow>
                     <p className="text-xs font-medium text-muted-foreground/80 mb-2">
                       {t("settingsPage.general.hotkey.activationMode")}
                     </p>
                     <ActivationModeSelector value={activationMode} onChange={setActivationMode} />
+                    {getCachedPlatform() === "linux" && activationMode === "push" && (
+                      <LinuxPttSetupInfo isAvailable={linuxPttAvailable} />
+                    )}
                   </SettingsPanelRow>
                 )}
               </SettingsPanel>
             </div>
-          </div>
-        );
 
-      case "transcription":
-        return (
-          <TranscriptionSection
-            isSignedIn={isSignedIn ?? false}
-            cloudTranscriptionMode={cloudTranscriptionMode}
-            setCloudTranscriptionMode={setCloudTranscriptionMode}
-            useLocalWhisper={useLocalWhisper}
-            setUseLocalWhisper={setUseLocalWhisper}
-            updateTranscriptionSettings={updateTranscriptionSettings}
-            cloudTranscriptionProvider={cloudTranscriptionProvider}
-            setCloudTranscriptionProvider={setCloudTranscriptionProvider}
-            cloudTranscriptionModel={cloudTranscriptionModel}
-            setCloudTranscriptionModel={setCloudTranscriptionModel}
-            localTranscriptionProvider={localTranscriptionProvider}
-            setLocalTranscriptionProvider={setLocalTranscriptionProvider}
-            whisperModel={whisperModel}
-            setWhisperModel={setWhisperModel}
-            parakeetModel={parakeetModel}
-            setParakeetModel={setParakeetModel}
-            openaiApiKey={openaiApiKey}
-            setOpenaiApiKey={setOpenaiApiKey}
-            groqApiKey={groqApiKey}
-            setGroqApiKey={setGroqApiKey}
-            mistralApiKey={mistralApiKey}
-            setMistralApiKey={setMistralApiKey}
-            customTranscriptionApiKey={customTranscriptionApiKey}
-            setCustomTranscriptionApiKey={setCustomTranscriptionApiKey}
-            cloudTranscriptionBaseUrl={cloudTranscriptionBaseUrl}
-            setCloudTranscriptionBaseUrl={setCloudTranscriptionBaseUrl}
-            toast={toast}
-          />
-        );
-
-      case "aiModels":
-        return (
-          <AiModelsSection
-            isSignedIn={isSignedIn ?? false}
-            cloudReasoningMode={cloudReasoningMode}
-            setCloudReasoningMode={setCloudReasoningMode}
-            useReasoningModel={useReasoningModel}
-            setUseReasoningModel={(value) => {
-              setUseReasoningModel(value);
-              updateReasoningSettings({ useReasoningModel: value });
-            }}
-            reasoningModel={reasoningModel}
-            setReasoningModel={setReasoningModel}
-            reasoningProvider={reasoningProvider}
-            setReasoningProvider={setReasoningProvider}
-            cloudReasoningBaseUrl={cloudReasoningBaseUrl}
-            setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
-            openaiApiKey={openaiApiKey}
-            setOpenaiApiKey={setOpenaiApiKey}
-            anthropicApiKey={anthropicApiKey}
-            setAnthropicApiKey={setAnthropicApiKey}
-            geminiApiKey={geminiApiKey}
-            setGeminiApiKey={setGeminiApiKey}
-            groqApiKey={groqApiKey}
-            setGroqApiKey={setGroqApiKey}
-            customReasoningApiKey={customReasoningApiKey}
-            setCustomReasoningApiKey={setCustomReasoningApiKey}
-            toast={toast}
-          />
-        );
-
-      case "agentConfig":
-        return (
-          <div className="space-y-5">
-            <SectionHeader
-              title={t("settingsPage.agentConfig.title")}
-              description={t("settingsPage.agentConfig.description")}
-            />
-
-            {/* Agent Name */}
+            {/* Meeting Mode Hotkey */}
             <div>
-              <p className="text-[13px] font-medium text-foreground mb-3">
-                {t("settingsPage.agentConfig.agentName")}
-              </p>
+              <SectionHeader
+                title={t("settingsPage.general.meetingHotkey.title")}
+                description={t("settingsPage.general.meetingHotkey.description")}
+              />
               <SettingsPanel>
                 <SettingsPanelRow>
-                  <div className="space-y-3">
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder={t("settingsPage.agentConfig.placeholder")}
-                        value={agentNameInput}
-                        onChange={(e) => setAgentNameInput(e.target.value)}
-                        className="flex-1 text-center text-base font-mono"
-                      />
-                      <Button
-                        onClick={handleSaveAgentName}
-                        disabled={!agentNameInput.trim()}
-                        size="sm"
+                  <HotkeyInput
+                    value={meetingKey}
+                    onChange={async (newHotkey) => {
+                      await registerMeetingHotkey(newHotkey);
+                    }}
+                    disabled={isMeetingHotkeyRegistering}
+                    validate={validateMeetingHotkey}
+                  />
+                  {meetingKey && (
+                    <button
+                      onClick={async () => {
+                        await window.electronAPI?.registerMeetingHotkey?.("");
+                        setMeetingKey("");
+                      }}
+                      disabled={isMeetingHotkeyRegistering}
+                      className="mt-2 text-xs text-muted-foreground/70 hover:text-foreground transition-colors disabled:opacity-50"
+                    >
+                      {t("settingsPage.general.meetingHotkey.clear")}
+                    </button>
+                  )}
+                </SettingsPanelRow>
+                <SettingsPanelRow className="flex items-center justify-between gap-3 border-t border-border/40 dark:border-white/5">
+                  <span className="text-xs text-muted-foreground/80">
+                    {t("settingsPage.general.meetingHotkey.layoutLabel")}
+                  </span>
+                  <Select
+                    value={meetingHotkeyLayoutMode}
+                    onValueChange={(value) =>
+                      setMeetingHotkeyLayoutMode(value as "side-panel" | "full-width")
+                    }
+                  >
+                    <SelectTrigger className="h-7 w-36 text-xs rounded-lg px-2.5 [&>svg]:h-3 [&>svg]:w-3">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem
+                        value="full-width"
+                        className="text-xs py-1.5 pl-2.5 pr-7 rounded-md"
                       >
-                        {t("settingsPage.agentConfig.save")}
-                      </Button>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground/60">
-                      {t("settingsPage.agentConfig.helper")}
-                    </p>
-                  </div>
+                        {t("settingsPage.general.meetingHotkey.layoutFullWidth")}
+                      </SelectItem>
+                      <SelectItem
+                        value="side-panel"
+                        className="text-xs py-1.5 pl-2.5 pr-7 rounded-md"
+                      >
+                        {t("settingsPage.general.meetingHotkey.layoutSidePanel")}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </SettingsPanelRow>
               </SettingsPanel>
             </div>
 
-            {/* How it works */}
+            {/* Agent Hotkey */}
             <div>
-              <SectionHeader title={t("settingsPage.agentConfig.howItWorksTitle")} />
+              <SectionHeader
+                title={t("agentMode.settings.hotkey")}
+                description={t("agentMode.settings.hotkeyDescription")}
+              />
               <SettingsPanel>
                 <SettingsPanelRow>
-                  <p className="text-[12px] text-muted-foreground leading-relaxed">
-                    {t("settingsPage.agentConfig.howItWorksDescription", { agentName })}
-                  </p>
-                </SettingsPanelRow>
-              </SettingsPanel>
-            </div>
-
-            {/* Examples */}
-            <div>
-              <SectionHeader title={t("settingsPage.agentConfig.examplesTitle")} />
-              <SettingsPanel>
-                <SettingsPanelRow>
-                  <div className="space-y-2.5">
-                    {[
-                      {
-                        input: `Hey ${agentName}, write a formal email about the budget`,
-                        mode: t("settingsPage.agentConfig.instructionMode"),
-                      },
-                      {
-                        input: `Hey ${agentName}, make this more professional`,
-                        mode: t("settingsPage.agentConfig.instructionMode"),
-                      },
-                      {
-                        input: `Hey ${agentName}, convert this to bullet points`,
-                        mode: t("settingsPage.agentConfig.instructionMode"),
-                      },
-                      {
-                        input: t("settingsPage.agentConfig.cleanupExample"),
-                        mode: t("settingsPage.agentConfig.cleanupMode"),
-                      },
-                    ].map((example, i) => (
-                      <div key={i} className="flex items-start gap-3">
-                        <span
-                          className={`shrink-0 mt-0.5 text-[10px] font-medium uppercase tracking-wider px-1.5 py-px rounded ${
-                            example.mode === t("settingsPage.agentConfig.instructionMode")
-                              ? "bg-primary/10 text-primary dark:bg-primary/15"
-                              : "bg-muted text-muted-foreground"
-                          }`}
-                        >
-                          {example.mode}
-                        </span>
-                        <p className="text-[12px] text-muted-foreground leading-relaxed">
-                          "{example.input}"
-                        </p>
-                      </div>
-                    ))}
-                  </div>
+                  <HotkeyInput
+                    value={chatAgentKey}
+                    onChange={setChatAgentKey}
+                    validate={validateAgentHotkey}
+                  />
+                  {chatAgentKey && (
+                    <button
+                      onClick={() => setChatAgentKey("")}
+                      className="mt-2 text-xs text-muted-foreground/70 hover:text-foreground transition-colors"
+                    >
+                      {t("agentMode.settings.clearHotkey")}
+                    </button>
+                  )}
                 </SettingsPanelRow>
               </SettingsPanel>
             </div>
           </div>
         );
 
-      case "prompts":
-        return (
-          <div className="space-y-5">
-            <SectionHeader
-              title={t("settingsPage.prompts.title")}
-              description={t("settingsPage.prompts.description")}
-            />
-
-            <PromptStudio />
-          </div>
-        );
-
-      case "intelligence":
-        return (
-          <div className="space-y-6">
-            {/* Text Cleanup (AI Models) */}
-            <AiModelsSection
-              isSignedIn={isSignedIn ?? false}
-              cloudReasoningMode={cloudReasoningMode}
-              setCloudReasoningMode={setCloudReasoningMode}
-              useReasoningModel={useReasoningModel}
-              setUseReasoningModel={(value) => {
-                updateReasoningSettings({ useReasoningModel: value });
-              }}
-              reasoningModel={reasoningModel}
-              setReasoningModel={setReasoningModel}
-              reasoningProvider={reasoningProvider}
-              setReasoningProvider={setReasoningProvider}
-              cloudReasoningBaseUrl={cloudReasoningBaseUrl}
-              setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
-              openaiApiKey={openaiApiKey}
-              setOpenaiApiKey={setOpenaiApiKey}
-              anthropicApiKey={anthropicApiKey}
-              setAnthropicApiKey={setAnthropicApiKey}
-              geminiApiKey={geminiApiKey}
-              setGeminiApiKey={setGeminiApiKey}
-              groqApiKey={groqApiKey}
-              setGroqApiKey={setGroqApiKey}
-              customReasoningApiKey={customReasoningApiKey}
-              setCustomReasoningApiKey={setCustomReasoningApiKey}
-              toast={toast}
-            />
-
-            {/* Agent Config */}
-            <div className="border-t border-border/40 pt-6">
-              <SectionHeader
-                title={t("settingsPage.agentConfig.title")}
-                description={t("settingsPage.agentConfig.description")}
-              />
-
-              <div className="space-y-5">
-                <div>
-                  <p className="text-xs font-medium text-foreground mb-3">
-                    {t("settingsPage.agentConfig.agentName")}
-                  </p>
-                  <SettingsPanel>
-                    <SettingsPanelRow>
-                      <div className="space-y-3">
-                        <div className="flex gap-2">
-                          <Input
-                            placeholder={t("settingsPage.agentConfig.placeholder")}
-                            value={agentNameInput}
-                            onChange={(e) => setAgentNameInput(e.target.value)}
-                            className="flex-1 text-center text-base font-mono"
-                          />
-                          <Button
-                            onClick={handleSaveAgentName}
-                            disabled={!agentNameInput.trim()}
-                            size="sm"
-                          >
-                            {t("settingsPage.agentConfig.save")}
-                          </Button>
-                        </div>
-                        <p className="text-xs text-muted-foreground/60">
-                          {t("settingsPage.agentConfig.helper")}
-                        </p>
-                      </div>
-                    </SettingsPanelRow>
-                  </SettingsPanel>
-                </div>
-
-                <div>
-                  <SectionHeader title={t("settingsPage.agentConfig.howItWorksTitle")} />
-                  <SettingsPanel>
-                    <SettingsPanelRow>
-                      <p className="text-xs text-muted-foreground leading-relaxed">
-                        {t("settingsPage.agentConfig.howItWorksDescription", { agentName })}
-                      </p>
-                    </SettingsPanelRow>
-                  </SettingsPanel>
-                </div>
-
-                <div>
-                  <SectionHeader title={t("settingsPage.agentConfig.examplesTitle")} />
-                  <SettingsPanel>
-                    <SettingsPanelRow>
-                      <div className="space-y-2.5">
-                        {[
-                          {
-                            input: t("settingsPage.agentConfig.examples.formalEmail", {
-                              agentName,
-                            }),
-                            mode: t("settingsPage.agentConfig.instructionMode"),
-                          },
-                          {
-                            input: t("settingsPage.agentConfig.examples.professional", {
-                              agentName,
-                            }),
-                            mode: t("settingsPage.agentConfig.instructionMode"),
-                          },
-                          {
-                            input: t("settingsPage.agentConfig.examples.bulletPoints", {
-                              agentName,
-                            }),
-                            mode: t("settingsPage.agentConfig.instructionMode"),
-                          },
-                          {
-                            input: t("settingsPage.agentConfig.cleanupExample"),
-                            mode: t("settingsPage.agentConfig.cleanupMode"),
-                          },
-                        ].map((example, i) => (
-                          <div key={i} className="flex items-start gap-3">
-                            <span
-                              className={`shrink-0 mt-0.5 text-xs font-medium uppercase tracking-wider px-1.5 py-px rounded ${
-                                example.mode === t("settingsPage.agentConfig.instructionMode")
-                                  ? "bg-primary/10 text-primary dark:bg-primary/15"
-                                  : "bg-muted text-muted-foreground"
-                              }`}
-                            >
-                              {example.mode}
-                            </span>
-                            <p className="text-xs text-muted-foreground leading-relaxed">
-                              "{example.input}"
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </SettingsPanelRow>
-                  </SettingsPanel>
-                </div>
-              </div>
-            </div>
-
-            {/* System Prompt */}
-            <div className="border-t border-border/40 pt-6">
-              <SectionHeader
-                title={t("settingsPage.prompts.title")}
-                description={t("settingsPage.prompts.description")}
-              />
-              <PromptStudio />
-            </div>
-          </div>
-        );
+      case "speechToText":
+      case "llms":
+        return null;
 
       case "privacyData":
         return (
@@ -3012,7 +3329,10 @@ EOF`,
                           checked={cloudBackupEnabled}
                           onChange={(v) => {
                             setCloudBackupEnabled(v);
-                            if (v) startMigration().catch(console.error);
+                            if (v) {
+                              startMigration().catch(console.error);
+                              syncService.syncAll().catch(console.error);
+                            }
                           }}
                         />
                       </SettingsRow>
@@ -3043,6 +3363,35 @@ EOF`,
                       {t("settingsPage.privacy.cloudNotesMigrationDone")}
                     </p>
                   )}
+                  {cloudBackupEnabled &&
+                    isSignedIn &&
+                    (() => {
+                      const lastSyncedAt = localStorage.getItem("lastSyncedAt");
+                      if (!lastSyncedAt) return null;
+                      const date = new Date(lastSyncedAt);
+                      const now = new Date();
+                      const diffMs = now.getTime() - date.getTime();
+                      const diffMin = Math.floor(diffMs / 60000);
+                      const diffHr = Math.floor(diffMs / 3600000);
+                      let relative: string;
+                      if (diffMin < 1) relative = t("settingsPage.privacy.justNow");
+                      else if (diffMin < 60)
+                        relative = t("settingsPage.privacy.minutesAgo", { count: diffMin });
+                      else if (diffHr < 24)
+                        relative = t("settingsPage.privacy.hoursAgo", { count: diffHr });
+                      else
+                        relative = date.toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        });
+                      return (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {t("settingsPage.privacy.lastSynced", { time: relative })}
+                        </p>
+                      );
+                    })()}
                 </div>
               )}
 
@@ -3121,6 +3470,20 @@ EOF`,
               </SettingsPanel>
             </div>
 
+            {/* Data Retention */}
+            <div className="border-t border-border/40 pt-6">
+              <SettingsPanel>
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.privacy.dataRetention")}
+                    description={t("settingsPage.privacy.dataRetentionDescription")}
+                  >
+                    <Toggle checked={dataRetentionEnabled} onChange={setDataRetentionEnabled} />
+                  </SettingsRow>
+                </SettingsPanelRow>
+              </SettingsPanel>
+            </div>
+
             {/* Permissions */}
             <div className="border-t border-border/40 pt-6">
               <SectionHeader
@@ -3135,31 +3498,32 @@ EOF`,
                   description={t("settingsPage.permissions.microphoneDescription")}
                   granted={permissionsHook.micPermissionGranted}
                   onRequest={permissionsHook.requestMicPermission}
-                  buttonText={t("settingsPage.permissions.test")}
-                  onOpenSettings={permissionsHook.openMicPrivacySettings}
+                  buttonText={t("settingsPage.permissions.grantAccess")}
                 />
 
-                {platform === "darwin" && (
+                {(platform === "darwin" || canManageSystemAudioInApp(systemAudio)) && (
                   <>
-                    <PermissionCard
-                      icon={Shield}
-                      title={t("settingsPage.permissions.accessibilityTitle")}
-                      description={t("settingsPage.permissions.accessibilityDescription")}
-                      granted={permissionsHook.accessibilityPermissionGranted}
-                      onRequest={permissionsHook.testAccessibilityPermission}
-                      buttonText={t("settingsPage.permissions.testAndGrant")}
-                      onOpenSettings={permissionsHook.openAccessibilitySettings}
-                    />
-                    <PermissionCard
-                      icon={Monitor}
-                      title={t("settingsPage.permissions.screenRecordingTitle")}
-                      description={t("settingsPage.permissions.screenRecordingDescription")}
-                      granted={screenRecording.granted}
-                      onRequest={screenRecording.request}
-                      buttonText={t("settingsPage.permissions.test")}
-                      onOpenSettings={screenRecording.openSettings}
-                      badge={t("settingsPage.permissions.optional")}
-                    />
+                    {platform === "darwin" && (
+                      <PermissionCard
+                        icon={Shield}
+                        title={t("settingsPage.permissions.accessibilityTitle")}
+                        description={t("settingsPage.permissions.accessibilityDescription")}
+                        granted={permissionsHook.accessibilityPermissionGranted}
+                        onRequest={permissionsHook.requestAccessibilityPermission}
+                        buttonText={t("settingsPage.permissions.grantAccess")}
+                      />
+                    )}
+                    {canManageSystemAudioInApp(systemAudio) && (
+                      <PermissionCard
+                        icon={Monitor}
+                        title={t("settingsPage.permissions.systemAudioTitle")}
+                        description={t("settingsPage.permissions.systemAudioDescription")}
+                        granted={systemAudio.granted}
+                        onRequest={systemAudio.request}
+                        buttonText={t("settingsPage.permissions.grantAccess")}
+                        badge={t("settingsPage.permissions.optional")}
+                      />
+                    )}
                   </>
                 )}
               </div>
@@ -3256,7 +3620,15 @@ EOF`,
                     <Button
                       onClick={async () => {
                         try {
-                          await checkForUpdates();
+                          const result = await checkForUpdates();
+                          if (result && !result.updateAvailable) {
+                            toast({
+                              title: t("settingsPage.general.updates.dialogs.noUpdates.title"),
+                              description: t(
+                                "settingsPage.general.updates.dialogs.noUpdates.description"
+                              ),
+                            });
+                          }
                         } catch {}
                       }}
                       disabled={checkingForUpdates || updateStatus.isDevelopment}
@@ -3435,28 +3807,29 @@ EOF`,
                           showConfirmDialog({
                             title: t("settingsPage.developer.resetAll.title"),
                             description: t("settingsPage.developer.resetAll.description"),
-                            onConfirm: () => {
-                              window.electronAPI
-                                ?.cleanupApp()
-                                .then(() => {
-                                  showAlertDialog({
-                                    title: t("settingsPage.developer.resetAll.successTitle"),
-                                    description: t(
-                                      "settingsPage.developer.resetAll.successDescription"
-                                    ),
-                                  });
-                                  setTimeout(() => {
-                                    window.location.reload();
-                                  }, 1000);
-                                })
-                                .catch(() => {
-                                  showAlertDialog({
-                                    title: t("settingsPage.developer.resetAll.failedTitle"),
-                                    description: t(
-                                      "settingsPage.developer.resetAll.failedDescription"
-                                    ),
-                                  });
+                            onConfirm: async () => {
+                              try {
+                                try {
+                                  await signOut();
+                                } catch {}
+                                await window.electronAPI?.cleanupApp();
+                                showAlertDialog({
+                                  title: t("settingsPage.developer.resetAll.successTitle"),
+                                  description: t(
+                                    "settingsPage.developer.resetAll.successDescription"
+                                  ),
                                 });
+                                setTimeout(() => {
+                                  window.location.reload();
+                                }, 1000);
+                              } catch {
+                                showAlertDialog({
+                                  title: t("settingsPage.developer.resetAll.failedTitle"),
+                                  description: t(
+                                    "settingsPage.developer.resetAll.failedDescription"
+                                  ),
+                                });
+                              }
                             },
                             variant: "destructive",
                             confirmText: t("settingsPage.developer.resetAll.confirmText"),
@@ -3475,9 +3848,6 @@ EOF`,
             </div>
           </div>
         );
-
-      case "agentMode":
-        return <AgentModeSettings />;
 
       default:
         return null;
@@ -3505,6 +3875,91 @@ EOF`,
         onOk={() => {}}
       />
 
+      {/* Mounted on first visit and kept alive so model-download progress and IPC listeners survive section switches. */}
+      {hasMountedSpeechToText && (
+        <TabPanel active={activeSection === "speechToText"}>
+          <SpeechToTextTabs
+            initialTab={
+              activeSection === "speechToText"
+                ? (initialSubTab as SpeechTab | undefined)
+                : undefined
+            }
+            renderDictation={() => (
+              <div className="space-y-6">
+                <TranscriptionSection
+                  isSignedIn={isSignedIn ?? false}
+                  startOnboarding={startOnboarding}
+                  cloudTranscriptionMode={cloudTranscriptionMode}
+                  setCloudTranscriptionMode={setCloudTranscriptionMode}
+                  useLocalWhisper={useLocalWhisper}
+                  setUseLocalWhisper={setUseLocalWhisper}
+                  updateTranscriptionSettings={updateTranscriptionSettings}
+                  cloudTranscriptionProvider={cloudTranscriptionProvider}
+                  setCloudTranscriptionProvider={setCloudTranscriptionProvider}
+                  cloudTranscriptionModel={cloudTranscriptionModel}
+                  setCloudTranscriptionModel={setCloudTranscriptionModel}
+                  localTranscriptionProvider={localTranscriptionProvider}
+                  setLocalTranscriptionProvider={setLocalTranscriptionProvider}
+                  whisperModel={whisperModel}
+                  setWhisperModel={setWhisperModel}
+                  parakeetModel={parakeetModel}
+                  setParakeetModel={setParakeetModel}
+                  cloudTranscriptionBaseUrl={cloudTranscriptionBaseUrl}
+                  setCloudTranscriptionBaseUrl={setCloudTranscriptionBaseUrl}
+                  transcriptionMode={transcriptionMode}
+                  setTranscriptionMode={setTranscriptionMode}
+                  remoteTranscriptionUrl={remoteTranscriptionUrl}
+                  setRemoteTranscriptionUrl={setRemoteTranscriptionUrl}
+                  showTranscriptionPreview={showTranscriptionPreview}
+                  setShowTranscriptionPreview={setShowTranscriptionPreview}
+                  toast={toast}
+                />
+                {transcriptionMode === "local" &&
+                  localTranscriptionProvider !== "nvidia" &&
+                  renderWhisperVadSettings()}
+              </div>
+            )}
+            renderNoteRecording={() => (
+              <div className="space-y-6">
+                <MeetingTranscriptionPanel />
+                {transcriptionMode === "local" &&
+                  localTranscriptionProvider !== "nvidia" &&
+                  renderWhisperVadSettings()}
+              </div>
+            )}
+          />
+        </TabPanel>
+      )}
+      {hasMountedLlms && (
+        <TabPanel active={activeSection === "llms"}>
+          <LlmsTabs
+            initialTab={
+              activeSection === "llms" ? (initialSubTab as LlmTab | undefined) : undefined
+            }
+            renderChatIntelligence={() => <ChatAgentSettings />}
+            renderDictationCleanup={() => (
+              <div className="space-y-6">
+                <AiModelsSection
+                  useCleanupModel={useCleanupModel}
+                  setUseCleanupModel={(value) => {
+                    updateCleanupSettings({ useCleanupModel: value });
+                  }}
+                  toast={toast}
+                />
+                <div className="border-t border-border/40 pt-6">
+                  <SectionHeader
+                    title={t("settingsPage.prompts.title")}
+                    description={t("settingsPage.prompts.description")}
+                  />
+                  <PromptStudio />
+                </div>
+              </div>
+            )}
+            renderDictationAgent={() => <DictationAgentSettings />}
+            renderNoteFormatting={() => <NoteFormattingSettings />}
+          />
+        </TabPanel>
+      )}
       {renderSectionContent()}
     </>
   );

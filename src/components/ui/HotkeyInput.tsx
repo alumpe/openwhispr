@@ -149,7 +149,7 @@ export interface HotkeyInputProps {
   validate?: (hotkey: string) => string | null | undefined;
 }
 
-export function mapKeyboardEventToHotkey(e: KeyboardEvent): string | null {
+function mapKeyboardEventToHotkey(e: KeyboardEvent): string | null {
   if (MODIFIER_CODES.has(e.code)) {
     return null;
   }
@@ -396,6 +396,20 @@ export function HotkeyInput({
     [disabled, buildModifierOnlyHotkey, finalizeCapture]
   );
 
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (disabled || !isCapturing) return;
+
+      const mouseHotkey = e.button === 3 ? "MouseButton4" : e.button === 4 ? "MouseButton5" : null;
+      if (!mouseHotkey) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      finalizeCapture(mouseHotkey);
+    },
+    [disabled, isCapturing, finalizeCapture]
+  );
+
   const handleFocus = useCallback(() => {
     if (!disabled) {
       setIsCapturing(true);
@@ -466,8 +480,10 @@ export function HotkeyInput({
         tabIndex={disabled ? -1 : 0}
         role="button"
         aria-label={t("hotkeyInput.ariaLabel")}
+        data-capturing={isCapturing || undefined}
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}
+        onMouseDown={handleMouseDown}
         onFocus={handleFocus}
         onBlur={handleBlur}
         className={`
@@ -569,8 +585,10 @@ export function HotkeyInput({
       tabIndex={disabled ? -1 : 0}
       role="button"
       aria-label={t("hotkeyInput.ariaLabel")}
+      data-capturing={isCapturing || undefined}
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
+      onMouseDown={handleMouseDown}
       onFocus={handleFocus}
       onBlur={handleBlur}
       className={`

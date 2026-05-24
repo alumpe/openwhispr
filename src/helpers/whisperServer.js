@@ -1,14 +1,16 @@
 const { spawn } = require("child_process");
 const EventEmitter = require("events");
 const fs = require("fs");
-const net = require("net");
 const path = require("path");
 const http = require("http");
 const { app } = require("electron");
 const debugLogger = require("./debugLogger");
 const { killProcess } = require("../utils/process");
+const { isPortAvailable } = require("../utils/serverUtils");
 const { getSafeTempDir } = require("./safeTempDir");
 const { convertToWav } = require("./ffmpegUtils");
+const sidecarPidFile = require("./sidecarPidFile");
+const { sanitizeWhisperVadConfig, DEFAULT_WHISPER_VAD_CONFIG } = require("./whisperVadConfig");
 
 const PORT_RANGE_START = 8178;
 const PORT_RANGE_END = 8199;
@@ -16,12 +18,65 @@ const STARTUP_TIMEOUT_MS = 30000;
 const HEALTH_CHECK_INTERVAL_MS = 5000;
 const HEALTH_CHECK_TIMEOUT_MS = 2000;
 
+function isVadActive(options = {}) {
+  return options.vadEnabled === true && !!options.vadModelPath;
+}
+
+function getVadSignature(options = {}) {
+  if (!isVadActive(options)) return "vad:off";
+  const vadConfig = sanitizeWhisperVadConfig(options.vadConfig || DEFAULT_WHISPER_VAD_CONFIG);
+  return `vad:on:${options.vadModelPath}:${JSON.stringify(vadConfig)}`;
+}
+
+function buildWhisperServerArgs({
+  modelPath,
+  port,
+  language,
+  threads,
+  vadEnabled = false,
+  vadModelPath = null,
+  vadConfig,
+}) {
+  const args = ["--model", modelPath, "--host", "127.0.0.1", "--port", String(port)];
+
+  if (threads) args.push("--threads", String(threads));
+
+  // whisper.cpp defaults to English when --language is omitted;
+  // explicitly pass "auto" to enable language auto-detection
+  args.push("--language", language || "auto");
+
+  if (isVadActive({ vadEnabled, vadModelPath })) {
+    const cfg = sanitizeWhisperVadConfig(vadConfig || DEFAULT_WHISPER_VAD_CONFIG);
+    args.push(
+      "--vad",
+      "--vad-model",
+      vadModelPath,
+      "--vad-threshold",
+      String(cfg.threshold),
+      "--vad-min-speech-duration-ms",
+      String(cfg.minSpeechDurationMs),
+      "--vad-min-silence-duration-ms",
+      String(cfg.minSilenceDurationMs),
+      "--vad-max-speech-duration-s",
+      String(cfg.maxSpeechDurationS),
+      "--vad-speech-pad-ms",
+      String(cfg.speechPadMs),
+      "--vad-samples-overlap",
+      String(cfg.samplesOverlap)
+    );
+  }
+
+  return args;
+}
+
 class WhisperServerManager extends EventEmitter {
   constructor() {
     super();
     this.process = null;
+    this.hostname = "127.0.0.1";
     this.port = null;
     this.ready = false;
+    this.isRemote = false;
     this.modelPath = null;
     this.startupPromise = null;
     this.healthCheckInterval = null;
@@ -29,6 +84,7 @@ class WhisperServerManager extends EventEmitter {
     this.cachedFFmpegPath = null;
     this.canConvert = false;
     this.useCuda = false;
+    this.vadSignature = "vad:off";
   }
 
   getFFmpegPath() {
@@ -173,34 +229,75 @@ class WhisperServerManager extends EventEmitter {
     return this.getServerBinaryPath() !== null;
   }
 
-  async findAvailablePort() {
-    for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
-      if (await this.isPortAvailable(port)) return port;
-    }
-    throw new Error(`No available ports in range ${PORT_RANGE_START}-${PORT_RANGE_END}`);
-  }
+  async connectRemote(url) {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname;
+    const port = parseInt(parsed.port, 10) || (parsed.protocol === "https:" ? 443 : 80);
 
-  isPortAvailable(port) {
-    return new Promise((resolve) => {
-      const server = net.createServer();
-      server.once("error", () => resolve(false));
-      server.once("listening", () => {
-        server.close();
-        resolve(true);
+    debugLogger.debug("Connecting to remote whisper-server", { hostname, port });
+
+    const reachable = await new Promise((resolve) => {
+      const req = http.request(
+        { hostname, port, path: "/", method: "GET", timeout: HEALTH_CHECK_TIMEOUT_MS },
+        (res) => {
+          resolve(true);
+          res.resume();
+        }
+      );
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false);
       });
-      server.listen(port, "127.0.0.1");
+      req.end();
     });
-  }
 
-  async start(modelPath, options = {}) {
-    if (this.startupPromise) return this.startupPromise;
-
-    if (this.ready && this.modelPath === modelPath) return;
+    if (!reachable) {
+      throw new Error(`Remote whisper-server unreachable at ${hostname}:${port}`);
+    }
 
     if (this.process) {
       await this.stop();
     }
 
+    this.hostname = hostname;
+    this.port = port;
+    this.ready = true;
+    this.isRemote = true;
+    this.canConvert = !!this.getFFmpegPath();
+
+    this.startHealthCheck();
+
+    debugLogger.info("Connected to remote whisper-server", { hostname, port });
+  }
+
+  async findAvailablePort() {
+    for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
+      if (await isPortAvailable(port)) return port;
+    }
+    throw new Error(`No available ports in range ${PORT_RANGE_START}-${PORT_RANGE_END}`);
+  }
+
+  async start(modelPath, options = {}) {
+    if (this.startupPromise) return this.startupPromise;
+
+    const nextVadSignature = getVadSignature(options);
+    if (
+      this.ready &&
+      this.modelPath === modelPath &&
+      !this.isRemote &&
+      this.vadSignature === nextVadSignature
+    ) {
+      return;
+    }
+
+    if (this.process || this.isRemote) {
+      await this.stop();
+    }
+
+    this.isRemote = false;
+    this.hostname = "127.0.0.1";
+    this.vadSignature = nextVadSignature;
     this.startupPromise = this._doStart(modelPath, options);
     try {
       await this.startupPromise;
@@ -234,7 +331,19 @@ class WhisperServerManager extends EventEmitter {
     const serverBinaryDir = path.dirname(serverBinary);
     spawnEnv.PATH = serverBinaryDir + pathSep + (process.env.PATH || "");
 
-    const args = ["--model", modelPath, "--host", "127.0.0.1", "--port", String(this.port)];
+    if (usingCuda && process.env.TRANSCRIPTION_GPU_INDEX) {
+      spawnEnv.CUDA_VISIBLE_DEVICES = process.env.TRANSCRIPTION_GPU_INDEX;
+    }
+
+    const args = buildWhisperServerArgs({
+      modelPath,
+      port: this.port,
+      language: options.language,
+      threads: options.threads,
+      vadEnabled: options.vadEnabled === true,
+      vadModelPath: options.vadModelPath || null,
+      vadConfig: options.vadConfig,
+    });
 
     // FFmpeg is required for pre-converting audio to 16kHz mono WAV
     this.canConvert = !!ffmpegPath;
@@ -244,11 +353,6 @@ class WhisperServerManager extends EventEmitter {
     } else {
       debugLogger.warn("FFmpeg not found - whisper-server will only accept 16kHz mono WAV");
     }
-
-    if (options.threads) args.push("--threads", String(options.threads));
-    // whisper.cpp defaults to English when --language is omitted;
-    // explicitly pass "auto" to enable language auto-detection
-    args.push("--language", options.language || "auto");
 
     debugLogger.debug("Starting whisper-server", {
       port: this.port,
@@ -265,7 +369,9 @@ class WhisperServerManager extends EventEmitter {
       windowsHide: true,
       env: spawnEnv,
       cwd: serverBinaryDir,
+      detached: process.platform !== "win32",
     });
+    sidecarPidFile.write("whisper", this.process.pid);
 
     let stderrBuffer = "";
     let exitCode = null;
@@ -292,6 +398,7 @@ class WhisperServerManager extends EventEmitter {
       this.ready = false;
       this.process = null;
       this.stopHealthCheck();
+      sidecarPidFile.clear("whisper");
     });
 
     try {
@@ -355,7 +462,7 @@ class WhisperServerManager extends EventEmitter {
     return new Promise((resolve) => {
       const req = http.request(
         {
-          hostname: "127.0.0.1",
+          hostname: this.hostname,
           port: this.port,
           path: "/",
           method: "GET",
@@ -379,7 +486,7 @@ class WhisperServerManager extends EventEmitter {
   startHealthCheck() {
     this.stopHealthCheck();
     this.healthCheckInterval = setInterval(async () => {
-      if (!this.process) {
+      if (!this.isRemote && !this.process) {
         this.stopHealthCheck();
         return;
       }
@@ -398,7 +505,7 @@ class WhisperServerManager extends EventEmitter {
   }
 
   async transcribe(audioBuffer, options = {}) {
-    if (!this.ready || !this.process) {
+    if (!this.ready || (!this.process && !this.isRemote)) {
       throw new Error("whisper-server is not running");
     }
 
@@ -467,7 +574,7 @@ class WhisperServerManager extends EventEmitter {
 
       const req = http.request(
         {
-          hostname: "127.0.0.1",
+          hostname: this.hostname,
           port: this.port,
           path: "/inference",
           method: "POST",
@@ -541,6 +648,15 @@ class WhisperServerManager extends EventEmitter {
   async stop() {
     this.stopHealthCheck();
 
+    if (this.isRemote) {
+      debugLogger.debug("Disconnecting from remote whisper-server");
+      this.ready = false;
+      this.isRemote = false;
+      this.hostname = "127.0.0.1";
+      this.port = null;
+      return;
+    }
+
     if (!this.process) {
       this.ready = false;
       return;
@@ -582,8 +698,10 @@ class WhisperServerManager extends EventEmitter {
   getStatus() {
     return {
       available: this.isAvailable(),
-      running: this.ready && this.process !== null,
+      running: this.ready && (this.process !== null || this.isRemote),
       port: this.port,
+      hostname: this.hostname,
+      isRemote: this.isRemote,
       modelPath: this.modelPath,
       modelName: this.modelPath ? path.basename(this.modelPath, ".bin").replace("ggml-", "") : null,
     };
@@ -591,3 +709,5 @@ class WhisperServerManager extends EventEmitter {
 }
 
 module.exports = WhisperServerManager;
+module.exports.buildWhisperServerArgs = buildWhisperServerArgs;
+module.exports.getVadSignature = getVadSignature;

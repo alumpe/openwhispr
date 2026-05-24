@@ -7,6 +7,24 @@
       "uiDescription": "選擇 OpenWhispr 介面使用的語言",
       "transcriptionLabel": "轉錄語言",
       "transcriptionDescription": "選擇你說話的語言，以提高轉錄準確度"
+    },
+    "noteFiles": {
+      "title": "將筆記儲存為檔案",
+      "description": "自動將筆記和逐字稿儲存為檔案到磁碟，按資料夾分類",
+      "path": "儲存位置",
+      "changePath": "變更位置",
+      "rebuild": "重建所有檔案",
+      "rebuildDescription": "將所有筆記和逐字稿重新同步到磁碟",
+      "rebuildError": {
+        "title": "重建失敗",
+        "description": "無法重建筆記檔案。請確認功能已啟用，且資料夾可寫入。"
+      }
+    },
+    "meeting": {
+      "speakerDetection": {
+        "title": "辨識並標記發言者",
+        "description": "關閉後，逐字稿會顯示「你」和「其他人」"
+      }
     }
   },
   "tray": {
@@ -22,6 +40,7 @@
     "appLabel": "OpenWhispr",
     "quit": "結束 OpenWhispr",
     "speech": "語音",
+    "settings": "設定...",
     "help": "說明",
     "learnMore": "瞭解更多",
     "file": "檔案",
@@ -68,16 +87,19 @@
     "errors": {
       "callbackRequired": "設定快捷鍵需要回呼函式",
       "globeOnlyMac": "Globe 鍵僅在 macOS 上可用。",
+      "mouseButtonOnlyMac": "滑鼠按鍵快捷鍵目前僅在 macOS 上受支援。",
       "alreadyRegistered": "\"{{hotkey}}\" 已被其他應用程式註冊。",
       "osReserved": "\"{{hotkey}}\" 可能被你的作業系統保留。",
       "registrationFailed": "無法註冊「{{hotkey}}」。可能已被其他應用程式使用。",
-      "trySuggestions": "試試看：{{suggestions}}"
+      "trySuggestions": "試試看：{{suggestions}}",
+      "slotConflict": "此快捷鍵已用於{{slot}}。"
     }
   },
   "systemSettings": {
     "microphone": "請開啟系統設定來配置麥克風權限。",
     "sound": "請開啟系統音效設定（例如 pavucontrol）。",
-    "accessibility": "此平台不支援輔助使用設定。"
+    "accessibility": "此平台不支援輔助使用設定。",
+    "systemAudio": "系統音訊設定在此平台上不可用。"
   },
   "titleBar": {
     "quitTitle": "結束 OpenWhispr",
@@ -120,6 +142,7 @@
     "cancel": "取消",
     "recommended": "推薦",
     "active": "使用中",
+    "freeAccountRequired": "需要免費帳戶",
     "cloud": "雲端",
     "local": "本機",
     "apiKey": "API Key",
@@ -132,7 +155,17 @@
     "private": "私密",
     "tap": "點按",
     "close": "關閉",
-    "dismiss": "忽略"
+    "dismiss": "忽略",
+    "save": "Guardar",
+    "saving": "Guardando…",
+    "create": "Crear",
+    "delete": "Eliminar",
+    "actions": "Acciones",
+    "error": "Algo salió mal",
+    "unknownError": "Ocurrió un error desconocido",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "done": "Listo"
   },
   "onboarding": {
     "steps": {
@@ -155,15 +188,18 @@
       "microphoneTitle": "麥克風",
       "microphoneDescription": "錄製您的聲音用於轉錄",
       "grant": "授權",
+      "grantAccess": "授予存取權限",
       "accessibilityTitle": "輔助使用",
-      "accessibilityDescription": "在系統設定中開啟此權限",
+      "accessibilityDescription": "允許將轉錄文字自動貼上到任何應用程式",
       "testAndGrant": "測試並授權",
       "requiredForApp": "OpenWhispr 運作所需",
       "microphoneRequired": "需要麥克風存取權限",
       "openSystemSettings": "打開系統設定",
-      "screenRecordingTitle": "系統音訊",
-      "screenRecordingDescription": "錄製通話和會議中其他參與者的音訊。我們絕不會錄製您的螢幕。",
-      "optional": "可選"
+      "systemAudioTitle": "系統音訊",
+      "systemAudioDescription": "轉錄會議、通話、講座、播客和其他系統音訊。",
+      "optional": "可選",
+      "recommended": "建議",
+      "accessibilityTroubleshooting": "在系統設定 → 輔助使用中，將 OpenWhispr 的開關關閉再重新開啟。如果無效，請將 OpenWhispr 從清單中移除後重新加入。還是不行？請寄信至 support@openwhispr.com。"
     },
     "transcription": {
       "title": "轉錄設定",
@@ -181,6 +217,25 @@
       "hotkeyToStartStop": "{{hotkey}} 開始/停止",
       "holdHotkey": "按住 {{hotkey}}",
       "textareaPlaceholder": "點擊這裡，然後使用快捷鍵開始語音輸入..."
+    },
+    "connectivity": {
+      "title": "無法從此網路連線到 OpenWhispr Cloud",
+      "body": "{{cause}} 你可以切換到本機引擎，或繼續並稍後再試。",
+      "useLocal": "使用本機引擎",
+      "continue": "仍然繼續"
+    }
+  },
+  "streaming": {
+    "errors": {
+      "cloudUnreachable": {
+        "title": "無法連線到 OpenWhispr Cloud",
+        "generic": "網路請求失敗，請檢查你的連線。",
+        "dnsBlocked": "DNS 無法解析 openwhispr.com — 廣告封鎖器或過濾器可能阻擋了它。",
+        "refused": "連線被拒絕 — 可能是防火牆或 VPN。",
+        "timeout": "網路逾時 — VPN、強制入口頁或連線不穩定。",
+        "tls": "TLS 交握失敗 — 請檢查系統時鐘或企業 Proxy。",
+        "fallback": "Cloud 無法連線 — 本次錄音將使用本機引擎。"
+      }
     }
   },
   "controlPanel": {
@@ -226,6 +281,7 @@
       "couldNotDeleteDescription": "這筆轉錄記錄可能已被移除。",
       "couldNotDeleteDescriptionGeneric": "發生錯誤，請再試一次。",
       "empty": "目前沒有轉錄記錄",
+      "dataRetentionDisabled": "資料保留已關閉。轉錄和音訊不會儲存至歷史記錄。",
       "press": "按下",
       "toStart": "開始",
       "dateGroups": {
@@ -236,16 +292,31 @@
       "failedCtaSettings": "設定您的轉錄服務供應商",
       "failedCtaAndRetry": "然後點擊重試",
       "failedCtaSettingsOnly": "在設定中配置您的轉錄服務供應商",
+      "failedLimitReached": "已達每日限額",
+      "failedOffline": "離線",
       "clearAll": "全部清除",
       "clearAllTitle": "清除所有轉錄",
       "clearAllDescription": "所有轉錄和音訊檔案將被永久刪除。",
       "clearAllSuccess": "歷史紀錄已清除",
       "clearAllErrorTitle": "無法清除歷史紀錄",
-      "clearAllErrorDescription": "發生錯誤，請重試。"
+      "clearAllErrorDescription": "發生錯誤，請重試。",
+      "copyText": "複製文字",
+      "deleteItem": "刪除",
+      "viewRawTranscript": "檢視原始轉錄",
+      "showInFolder": "在 Finder 中顯示",
+      "showInFolderWindows": "在檔案總管中顯示",
+      "showInFolderLinux": "在檔案管理員中顯示",
+      "retryTranscription": "重新轉錄",
+      "retrying": "正在重新轉錄…",
+      "retrySuccess": "轉錄已更新",
+      "retryError": "重新轉錄失敗",
+      "audioNotFound": "找不到音訊檔案或檔案已過期",
+      "noAiProcessing": "此轉錄未套用 AI 處理",
+      "rawTranscript": "原始轉錄"
     },
     "cloudMigration": {
-      "title": "歡迎使用 OpenWhispr Pro",
-      "description": "你的 7 天免費試用已啟用！我們已將轉錄切換至 OpenWhispr Cloud，提供更快、更準確的結果。你之前的設定已儲存，隨時可在設定中切換回來。",
+      "title": "歡迎使用 OpenWhispr Cloud",
+      "description": "我們已將轉錄切換至 OpenWhispr Cloud，提供更快、更準確的結果。你之前的設定已儲存，隨時可在設定中切換回來。",
       "viewSettings": "查看設定"
     },
     "aiCta": {
@@ -259,14 +330,17 @@
       "bannerDescription": "啟用 GPU 加速以獲得更快的效能。",
       "enableButton": "啟用 GPU",
       "dismissButton": "暫時不要"
-    }
+    },
+    "backToNotes": "返回筆記"
   },
   "reasoning": {
     "mode": {
       "cloud": "雲端",
       "local": "本機",
+      "enterprise": "企業",
       "localDescription": "在你的裝置上執行。完全私密，可離線使用。",
-      "cloudDescription": "透過 API 使用進階模型。快速且強大，需要網路。"
+      "cloudDescription": "透過 API 使用進階模型。快速且強大，需要網路。",
+      "enterpriseDescription": "使用你組織的雲端服務商憑證。"
     },
     "custom": {
       "endpointWithProtocol": "請輸入包含通訊協定的完整 URL（例如 https://server/v1）。",
@@ -291,7 +365,52 @@
     },
     "getApiKey": "取得 API Key ->",
     "selectModel": "選擇模型",
-    "availableModels": "可用模型"
+    "availableModels": "可用模型",
+    "disableThinking": {
+      "label": "停用思考輸出",
+      "help": "略過推理權杖以獲得更乾淨的輸出。建議用於清理。某些伺服器會忽略此提示。"
+    },
+    "selfHosted": {
+      "endpointHelp": "指向本地網路中相容 OpenAI 的伺服器（例如 Ollama、LM Studio、vLLM 或 llama-server）。"
+    },
+    "enterprise": {
+      "title": "企業級提供商",
+      "description": "使用你組織的憑證連線到雲端提供商。",
+      "testConnection": "測試連線",
+      "testing": "測試中…",
+      "testSuccess": "已連線",
+      "testFailed": "連線失敗",
+      "authMode": "驗證方式",
+      "ssoProfile": "SSO 設定檔",
+      "accessKeys": "存取金鑰",
+      "adc": "Application Default Credentials",
+      "apiKeyMode": "API 金鑰",
+      "region": "區域",
+      "profile": "設定檔名稱",
+      "accessKeyId": "Access Key ID",
+      "secretAccessKey": "Secret Access Key",
+      "sessionToken": "Session Token（選用）",
+      "endpoint": "端點 URL",
+      "deploymentName": "部署名稱",
+      "apiVersion": "API 版本",
+      "projectId": "專案 ID",
+      "location": "位置",
+      "customModelId": "自訂模型 ID",
+      "customModelPlaceholder": "輸入模型 ID 或部署名稱",
+      "suggestedModels": "建議模型",
+      "bedrock": {
+        "ssoHelp": "使用你的 AWS CLI SSO 設定。請確保已執行 'aws sso login'。",
+        "keysHelp": "輸入你的 AWS IAM 存取金鑰。"
+      },
+      "azure": {
+        "endpointHelp": "你的 Azure OpenAI 資源端點（例如 https://myresource.openai.azure.com）。",
+        "deploymentHelp": "Azure OpenAI 中的模型部署名稱。"
+      },
+      "vertex": {
+        "adcHelp": "使用 Application Default Credentials。請執行：gcloud auth application-default login",
+        "apikeyHelp": "從 Google AI Studio 取得的 Vertex AI Express Mode API 金鑰。"
+      }
+    }
   },
   "transcription": {
     "deleteModel": {
@@ -326,6 +445,11 @@
       "noAudio": {
         "title": "未偵測到音訊",
         "description": "錄音中未偵測到聲音。請再試一次。"
+      },
+      "errorDescriptions": {
+        "sessionExpired": "OpenWhispr Cloud 工作階段無法使用。請至「設定」重新登入。",
+        "offline": "你目前離線。雲端轉錄需要網際網路連線。",
+        "dailyLimitReached": "已達今日的轉錄上限。請明天再試或升級你的方案。"
       }
     },
     "clipboard": {
@@ -360,6 +484,7 @@
         "server": "伺服器錯誤（{{error}}）。請稍後再試。",
         "generic": "下載失敗：{{error}}",
         "extractionFailed": "模型已下載，但安裝失敗。點擊下載可重試安裝，無需重新下載。",
+        "tlsError": "憑證錯誤 — 您的網路可能使用了阻擋下載的SSL檢查。請嘗試從其他網路下載。",
         "unknown": "未知錯誤"
       },
       "downloadFailed": {
@@ -507,7 +632,10 @@
     },
     "social": {
       "completeInBrowser": "請在瀏覽器中完成登入",
-      "continueWithGoogle": "使用 Google 繼續"
+      "continueWithApple": "使用 Apple 繼續",
+      "continueWithGoogle": "使用 Google 繼續",
+      "continueWithMicrosoft": "使用 Microsoft 繼續",
+      "protocolUnavailable": "無法透過瀏覽器登入 — 請在系統的「預設應用程式」設定中重新註冊 openwhispr:// 協定。"
     },
     "welcomeSubtitle": "隨時隨地用語音輸入文字",
     "welcomeTitle": "歡迎使用 OpenWhispr",
@@ -777,45 +905,14 @@
     "view": {
       "customPrompt": "自訂提示詞",
       "defaultPrompt": "預設提示詞",
-      "modes": {
-        "agent": {
-          "description": "由「{{agentName}}」觸發——執行指令、回答問題、撰寫內容",
-          "label": "助理"
-        },
-        "cleanup": {
-          "description": "快速處理——移除語助詞，修正文法和標點",
-          "label": "文字整理"
-        }
-      },
       "modified": "已修改"
     }
-  },
-  "resetPassword": {
-    "backToSignIn": "返回登入",
-    "confirmPasswordPlaceholder": "確認新密碼",
-    "continue": "繼續",
-    "errors": {
-      "passwordMinLength": "密碼至少需要 8 個字元",
-      "passwordsDoNotMatch": "密碼不一致"
-    },
-    "goBack": "返回",
-    "newPasswordPlaceholder": "新密碼",
-    "notConfigured": "尚未設定驗證功能。",
-    "passwordMinLength": "密碼至少需要 8 個字元",
-    "resetButton": "重設密碼",
-    "resetting": "重設中...",
-    "subtitle": "請在下方輸入你的新密碼",
-    "success": {
-      "description": "你的密碼已更新。你現在已登入。",
-      "title": "密碼重設成功"
-    },
-    "title": "建立新密碼"
   },
   "settingsModal": {
     "groups": {
       "account": "帳戶",
       "app": "應用程式",
-      "speechAi": "語音與 AI",
+      "aiModels": "AI 模型",
       "system": "系統"
     },
     "sections": {
@@ -835,13 +932,13 @@
         "description": "聽寫快捷鍵與啟用模式",
         "label": "快捷鍵"
       },
-      "transcription": {
-        "description": "語音轉文字引擎",
-        "label": "轉錄"
+      "speechToText": {
+        "description": "聽寫與筆記錄音引擎",
+        "label": "語音轉文字"
       },
-      "intelligence": {
-        "description": "AI 模型、助理與提示詞",
-        "label": "智慧功能"
+      "llms": {
+        "description": "用於清理、筆記格式化和聊天的模型",
+        "label": "語言模型"
       },
       "privacyData": {
         "description": "隱私、權限與資料分析",
@@ -851,9 +948,9 @@
         "description": "更新、儲存與開發者工具",
         "label": "系統"
       },
-      "agentMode": {
-        "label": "智慧助手模式",
-        "description": "語音聊天助手"
+      "workspace": {
+        "label": "Espacio de trabajo",
+        "description": "Miembros, equipos, facturación y claves API"
       }
     },
     "title": "設定"
@@ -883,7 +980,7 @@
       },
       "disabled": "已停用",
       "featuresDisabled": "帳號功能已停用",
-      "featuresDisabledDescription": "請在 .env 檔案中設定 VITE_NEON_AUTH_URL 以啟用帳號功能。",
+      "featuresDisabledDescription": "請在 .env 檔案中設定 VITE_AUTH_URL 以啟用帳號功能。",
       "notConfigured": "尚未設定驗證功能",
       "notSignedIn": "尚未登入",
       "notSignedInDescription": "建立帳號以解鎖進階功能。",
@@ -934,12 +1031,16 @@
           "price": "$0",
           "period": "永久",
           "features": [
-            "Up to 2,000 words/week",
-            "5 hours of meetings per month",
-            "Local AI models included",
-            "Bring your own API keys",
-            "Zero data retention",
-            "Community support"
+            "## OpenWhispr Cloud",
+            "每週 2,000 字轉錄",
+            "每月 5 小時會議錄製",
+            "## 永久免費",
+            "無限本地 AI 模型",
+            "使用自己的 API 金鑰無限雲端轉錄",
+            "支援 100+ 種語言",
+            "自訂詞典",
+            "零資料留存",
+            "社群支援"
           ]
         },
         "pro": {
@@ -951,10 +1052,13 @@
           "annualEquivalent": "$6.67",
           "includesPrefix": "所有 Free 功能 +",
           "features": [
-            "Unlimited words per week",
-            "20 hours of meetings per month",
-            "Email support",
-            "Zero data retention"
+            "無限雲端轉錄",
+            "每月 20 小時會議錄製",
+            "跨裝置同步",
+            "個人 API 存取",
+            "在所有應用程式中整合 MCP",
+            "行動應用程式（iOS 即將推出）",
+            "電子郵件支援"
           ],
           "cta": "開始使用",
           "switchToAnnual": "切換為年付"
@@ -968,27 +1072,23 @@
           "annualEquivalent": "$16.67",
           "includesPrefix": "所有 Pro 功能 +",
           "badge": "最熱門",
-          "features": [
-            "Unlimited usage",
-            "Unlimited meeting recordings",
-            "Priority support",
-            "Zero data retention"
-          ],
+          "features": ["無限會議錄製", "代理模式", "與您的資料對話", "優先支援"],
           "cta": "開始使用",
           "switchToAnnual": "切換為年付"
         },
         "enterprise": {
           "name": "Enterprise",
           "price": "自訂",
-          "subtitle": "僅限年付",
+          "subtitle": "提供進階安全保障與支援",
           "includesPrefix": "所有 Business 功能 +",
           "features": [
-            "Managed API credits",
-            "Cloud sync across devices",
-            "Team features & admin",
-            "SSO & compliance"
+            "託管 API 額度",
+            "跨裝置雲端同步",
+            "團隊功能與管理",
+            "SSO 與合規",
+            "專屬支援"
           ],
-          "cta": "聯絡我們"
+          "cta": "聯繫銷售"
         },
         "currentPlan": "目前方案",
         "upgrade": "升級",
@@ -1013,12 +1113,23 @@
         "button": "建立免費帳號"
       },
       "user": "使用者",
-      "wordsRemaining": "剩餘 {{remaining}} 字"
+      "wordsRemaining": "剩餘 {{remaining}} 字",
+      "deleteAccount": {
+        "label": "刪除帳戶",
+        "labelDescription": "永久刪除您的帳戶、所有雲端資料和本地資料。此操作無法復原。",
+        "button": "刪除我的帳戶",
+        "deleting": "正在刪除...",
+        "title": "刪除您的帳戶？",
+        "description": "這將永久刪除您的 OpenWhispr 帳戶、所有雲端同步筆記和所有本地資料，包括轉錄、音訊錄製、下載的模型、行事曆連線和設定。此操作無法復原。",
+        "confirmText": "刪除所有內容",
+        "successTitle": "帳戶已刪除",
+        "successDescription": "您的帳戶和所有資料已被刪除。應用程式將立即重新載入。",
+        "failedTitle": "刪除失敗",
+        "failedDescription": "刪除您的帳戶時發生錯誤。您的本地資料可能已被部分刪除。請重試。"
+      }
     },
     "agentConfig": {
       "agentName": "助理名稱",
-      "cleanupExample": "文字整理",
-      "cleanupMode": "文字整理模式",
       "description": "為你的 AI 助理取個名字，這樣你可以在語音輸入時直接呼叫它",
       "dialogs": {
         "updatedDescription": "你的助理現在叫做「{{name}}」。說「Hey {{name}}」加上你的指令即可使用。",
@@ -1026,7 +1137,7 @@
       },
       "examplesTitle": "範例",
       "helper": "選個簡短、自然、好說的名字",
-      "howItWorksDescription": "當你說「Hey {{agentName}}」加上一個指令時，AI 會從文字整理模式切換到指令模式。沒有觸發語的時候，它只會整理你的語音輸入。",
+      "howItWorksDescription": "當你說「Hey {{agentName}}」加上一個指令時，AI 會執行你的命令——撰寫內容、格式化文字或回答問題——而不是逐字轉寫。",
       "howItWorksTitle": "運作方式",
       "instructionMode": "指令",
       "placeholder": "例如 Jarvis、Nova、Atlas...",
@@ -1043,9 +1154,21 @@
       "customSetupDescription": "使用你自己的供應商和 API Key。",
       "description": "整理轉錄文字、處理指令、修正錯誤，同時保留你的語調。",
       "enableTextCleanup": "啟用文字整理",
-      "enableTextCleanupDescription": "AI 自動提升轉錄品質",
+      "enableTextCleanupDescription": "AI 移除語助詞，修正文法和標點",
+      "modes": {
+        "openwhispr": "OpenWhispr Cloud",
+        "providers": "雲端供應商",
+        "local": "本機",
+        "selfHosted": "自架主機",
+        "openwhisprDesc": "準確可靠，無需設定。",
+        "providersDesc": "使用你自己的 API Key。",
+        "localDesc": "裝置端模型，完全私密。",
+        "selfHostedDesc": "你的伺服器，在你的網路上。",
+        "enterprise": "企業級",
+        "enterpriseDesc": "使用你組織的雲端帳號（AWS、Azure、GCP）。"
+      },
       "openwhisprCloud": "OpenWhispr Cloud",
-      "openwhisprCloudDescription": "即開即用，無需設定。",
+      "openwhisprCloudDescription": "準確可靠，無需設定。",
       "title": "AI 文字增強",
       "toasts": {
         "switchedCloud": {
@@ -1055,6 +1178,22 @@
         "switchedCustom": {
           "description": "設定你自己的供應商和 API Key。",
           "title": "已切換至自訂設定"
+        },
+        "switchedProviders": {
+          "title": "雲端供應商",
+          "description": "使用你自己的 API Key。"
+        },
+        "switchedLocal": {
+          "title": "本機執行",
+          "description": "AI 在你的裝置上本機執行。"
+        },
+        "switchedSelfHosted": {
+          "title": "自架主機",
+          "description": "使用你自己的伺服器。"
+        },
+        "switchedEnterprise": {
+          "title": "企業級",
+          "description": "正在使用你組織的雲端帳號。"
         }
       }
     },
@@ -1077,7 +1216,7 @@
       "removing": "移除中...",
       "resetAll": {
         "confirmText": "刪除所有資料",
-        "description": "這將永久刪除所有設定、轉錄記錄和快取資料。重設後應用程式將重新載入。",
+        "description": "這將永久刪除所有本地設定、轉錄、音訊錄製、下載的 AI 模型、行事曆連線和快取資料。雲端資料和您的帳戶不會受到影響。應用程式將在重設後重新載入。",
         "failedDescription": "發生錯誤。請再試一次或重新安裝應用程式。",
         "failedTitle": "無法重設",
         "successDescription": "所有資料已重設。應用程式即將重新載入。",
@@ -1085,7 +1224,7 @@
         "title": "重設所有應用程式資料"
       },
       "resetAppData": "重設應用程式資料",
-      "resetAppDataDescription": "永久刪除所有設定、轉錄記錄和快取資料"
+      "resetAppDataDescription": "永久刪除所有本地設定、轉錄、音訊錄製、下載的模型和快取資料"
     },
     "dictionary": {
       "title": "自訂詞典",
@@ -1123,13 +1262,31 @@
         "autoHide": "閒置時自動隱藏",
         "autoHideDescription": "在開始語音輸入前保持圖示隱藏",
         "description": "控制語音輸入圖示在畫面上的顯示時機",
-        "title": "浮動圖示"
+        "title": "浮動圖示",
+        "startPosition": "起始位置",
+        "startPositionDescription": "語音錄製面板在螢幕上的顯示位置",
+        "bottomRight": "右下角",
+        "center": "底部置中",
+        "bottomLeft": "左下角"
       },
       "hotkey": {
         "activationMode": "啟用模式",
         "description": "用來開始和停止語音輸入的組合鍵",
         "resetToDefault": "重置為 {{hotkey}}",
-        "title": "語音輸入快捷鍵"
+        "title": "語音輸入快捷鍵",
+        "linuxPttPermissionTitle": "按住說話需要額外設定",
+        "linuxPttPermissionDescription": "執行此指令並重新登入：sudo usermod -aG input $USER",
+        "linuxPttSetupTitle": "按住說話需要設定",
+        "linuxPttSetupDescription": "您的使用者需要存取鍵盤輸入裝置的權限。",
+        "linuxPttSetupNote": "執行指令後，請登出並重新登入。"
+      },
+      "meetingHotkey": {
+        "title": "會議模式快捷鍵",
+        "description": "啟動會議模式並將面板固定到螢幕側邊",
+        "clear": "移除快捷鍵",
+        "layoutLabel": "透過快捷鍵觸發時,開啟方式:",
+        "layoutFullWidth": "全寬",
+        "layoutSidePanel": "側邊欄"
       },
       "microphone": {
         "description": "選擇用於語音輸入的輸入裝置",
@@ -1142,8 +1299,22 @@
         "pauseMediaDescription": "開始聽寫時自動暫停音樂",
         "title": "音效"
       },
+      "notifications": {
+        "title": "通知",
+        "description": "設定 OpenWhispr 可以顯示哪些通知",
+        "disableAll": "停用所有通知",
+        "disableAllDescription": "靜音除錯誤訊息外的所有內容",
+        "meetingDetection": "會議偵測",
+        "meetingDetectionDescription": "偵測到會議時通知您以便開始錄音",
+        "calendarReminders": "行事曆提醒",
+        "calendarRemindersDescription": "預定會議即將開始時通知您",
+        "updates": "應用程式更新",
+        "updatesDescription": "有新版本可用時通知您"
+      },
       "clipboard": {
         "title": "剪貼簿",
+        "autoPaste": "自動貼上",
+        "autoPasteDescription": "聽寫結束後自動將轉錄文字貼上到目前使用中的應用程式",
         "keepInClipboard": "將轉錄內容保留在剪貼簿",
         "keepInClipboardDescription": "將語音輸入的文字保留在剪貼簿中，以便在需要時手動貼上"
       },
@@ -1209,8 +1380,12 @@
             "step1Title": "啟動常駐程式",
             "step1Desc": "啟動 ydotoold 並設定為每次登入時自動執行。",
             "step2Title": "驗證是否正在執行"
+          },
+          "xclip": {
+            "step1Title": "安裝 xclip"
           }
-        }
+        },
+        "xclipDesc": "KDE Wayland 貼上用的剪貼簿工具（xclip 或 xsel）"
       },
       "updates": {
         "badges": {
@@ -1282,8 +1457,9 @@
         "title": "重設輔助使用權限"
       },
       "optional": "可選",
-      "screenRecordingTitle": "系統音訊",
-      "screenRecordingDescription": "錄製通話和會議中其他參與者的音訊",
+      "systemAudioTitle": "系統音訊",
+      "systemAudioDescription": "轉錄會議、通話、講座、播客和其他系統音訊。",
+      "grantAccess": "授予存取權限",
       "test": "測試",
       "testAndGrant": "測試並授權",
       "title": "權限",
@@ -1298,18 +1474,67 @@
       "description": "控制哪些資料會離開你的裝置。預設全部關閉。",
       "title": "隱私權",
       "usageAnalytics": "使用分析",
-      "usageAnalyticsDescription": "分享匿名的效能指標，協助我們改善 OpenWhispr。我們絕不會傳送轉錄內容——只有計時和錯誤資料。"
+      "usageAnalyticsDescription": "分享匿名的效能指標，協助我們改善 OpenWhispr。我們絕不會傳送轉錄內容——只有計時和錯誤資料。",
+      "dataRetention": "資料保留",
+      "dataRetentionDescription": "將轉錄和音訊本地儲存至歷史記錄。停用後，轉錄內容會被貼上但不會被儲存。",
+      "hoursAgo": "{{count}}小時前",
+      "justNow": "剛剛",
+      "lastSynced": "上次同步 {{time}}",
+      "minutesAgo": "{{count}}分鐘前",
+      "audioRetention": "音訊保留",
+      "audioRetentionDescription": "將音訊錄製檔案儲存在本機以便重新轉錄和下載。檔案會在保留期限過後自動刪除。",
+      "audioRetentionDisabled": "已停用",
+      "audioRetentionDays": "{{count}} 天",
+      "audioStorageUsage": "儲存空間用量",
+      "audioStorageUsageDescription": "儲存在此裝置上的音訊檔案",
+      "audioStorageFiles": "{{count}} 個檔案，{{size}}",
+      "audioStorageEmpty": "沒有已儲存的音訊檔案",
+      "clearAllAudio": "清除所有音訊",
+      "clearAllAudioConfirm": "刪除所有已儲存的音訊檔案？此操作無法復原。"
     },
     "prompts": {
       "description": "檢視、自訂和測試用於文字整理和指令偵測的統一系統提示詞",
       "title": "提示詞工作室"
     },
+    "speechToText": {
+      "title": "語音轉文字",
+      "description": "為聽寫和筆記錄音選擇一個引擎",
+      "tabs": {
+        "dictation": "聽寫",
+        "noteRecording": "筆記錄音"
+      },
+      "selfHostedStreamingNote": "需要支援串流轉錄的伺服器。"
+    },
+    "llms": {
+      "title": "語言模型",
+      "description": "設定用於聽寫清理、筆記格式化和聊天的模型",
+      "tabs": {
+        "dictationCleanup": "聽寫清理",
+        "dictationAgent": "Voice Agent",
+        "noteFormatting": "筆記格式化",
+        "chatIntelligence": "聊天"
+      }
+    },
+    "noteFormatting": {
+      "autoGenerateTitle": "自動產生筆記標題",
+      "autoGenerateTitleDescription": "使用 AI 在轉錄或增強後為筆記產生簡短標題"
+    },
     "transcription": {
       "customSetup": "自訂設定",
       "customSetupDescription": "使用你自己的供應商和 API Key。",
       "description": "選擇 OpenWhispr 轉錄語音的方式",
+      "modes": {
+        "openwhispr": "OpenWhispr Cloud",
+        "providers": "雲端供應商",
+        "local": "本機",
+        "selfHosted": "自架主機",
+        "openwhisprDesc": "準確可靠，無需設定。",
+        "providersDesc": "使用你自己的 API Key。",
+        "localDesc": "裝置端模型，完全私密。",
+        "selfHostedDesc": "你的伺服器，在你的網路上。"
+      },
       "openwhisprCloud": "OpenWhispr Cloud",
-      "openwhisprCloudDescription": "即開即用，無需設定。",
+      "openwhisprCloudDescription": "準確可靠，無需設定。",
       "title": "語音轉文字",
       "toasts": {
         "switchedCloud": {
@@ -1319,14 +1544,180 @@
         "switchedCustom": {
           "description": "設定你自己的供應商和 API Key。",
           "title": "已切換至自訂設定"
+        },
+        "switchedProviders": {
+          "title": "雲端供應商",
+          "description": "使用你自己的 API Key。"
+        },
+        "switchedLocal": {
+          "title": "本機執行",
+          "description": "轉錄在你的裝置上本機執行。"
+        },
+        "switchedSelfHosted": {
+          "title": "自架主機",
+          "description": "使用你自己的伺服器。"
         }
+      },
+      "gpuDevice": {
+        "title": "轉錄 GPU",
+        "description": "用於本機語音辨識的 GPU"
+      },
+      "diarization": {
+        "title": "說話者辨識",
+        "description": "辨識會議錄音中的各個說話者",
+        "modelsReady": "模型已就緒",
+        "deleteModels": "刪除模型"
+      },
+      "transcriptionPreview": "即時轉錄預覽",
+      "transcriptionPreviewDescription": "在浮動視窗中顯示轉錄結果，再進行文字整理",
+      "vad": {
+        "title": "語音活動偵測",
+        "description": "設定 Silero VAD 如何為本機 Whisper 轉錄偵測並切分語音",
+        "toggles": {
+          "dictation": {
+            "title": "聽寫使用 Silero VAD",
+            "description": "為本機聽寫啟用語音活動偵測"
+          },
+          "noteRecording": {
+            "title": "筆記錄音使用 Silero VAD",
+            "description": "為本機筆記錄音啟用語音活動偵測"
+          },
+          "meeting": {
+            "title": "會議使用 Silero VAD",
+            "description": "為本機會議轉錄啟用語音活動偵測"
+          }
+        },
+        "fields": {
+          "threshold": {
+            "label": "VAD 閾值",
+            "info": "高於此機率的音框會被判定為語音。"
+          },
+          "minSpeechDurationMs": {
+            "label": "最小語音時長 (毫秒)",
+            "info": "短於此時長的語音片段會作為雜訊或誤判被丟棄。"
+          },
+          "minSilenceDurationMs": {
+            "label": "最小靜音時長 (毫秒)",
+            "info": "靜音需達到此時長才會結束一個語音片段。較短的停頓會保留在片段內。"
+          },
+          "maxSpeechDurationS": {
+            "label": "最大語音時長 (秒)",
+            "info": "較長的片段會在靜音處自動切分，以便保持可控大小。"
+          },
+          "speechPadMs": {
+            "label": "語音填補 (毫秒)",
+            "info": "在每個語音片段前後加入的填補量，避免切到字詞邊緣。"
+          },
+          "samplesOverlap": {
+            "label": "樣本重疊 (秒)",
+            "info": "將每個片段延伸到下一個片段的音訊量，避免拼接時出現突兀截斷。"
+          }
+        }
+      }
+    },
+    "intelligence": {
+      "gpuDevice": {
+        "title": "智慧處理 GPU",
+        "description": "用於本機 AI 處理的 GPU"
+      }
+    },
+    "selfHosted": {
+      "endpointUrl": "端點 URL",
+      "serverUrl": "伺服器 URL",
+      "apiKeyOptional": "API Key（選填）"
+    },
+    "workspace": {
+      "title": "Espacio de trabajo",
+      "description": "Colabora con compañeros, comparte notas y administra la facturación en un solo lugar.",
+      "empty": {
+        "title": "Crea tu primer espacio de trabajo",
+        "description": "Los espacios de trabajo te permiten colaborar con compañeros y compartir notas.",
+        "create": "Crear espacio de trabajo"
+      },
+      "tab": {
+        "general": "General",
+        "members": "Miembros",
+        "teams": "Equipos",
+        "billing": "Facturación",
+        "developer": "Desarrollador"
+      },
+      "role": {
+        "owner": "Propietario",
+        "admin": "Administrador",
+        "member": "Miembro"
+      },
+      "general": {
+        "nameLabel": "Nombre del espacio de trabajo",
+        "slugLabel": "Slug",
+        "slugHint": "Se usa en URLs y enlaces de invitación. Solo letras minúsculas, dígitos y guiones.",
+        "saved": "Espacio de trabajo actualizado",
+        "dangerTitle": "Eliminar espacio de trabajo",
+        "dangerDescription": "Todas las notas, carpetas e integraciones compartidas se eliminarán. Esto no se puede deshacer.",
+        "delete": "Eliminar espacio de trabajo",
+        "confirmTitle": "¿Eliminar {{name}}?",
+        "confirmDescription": "Esto cancela la suscripción y elimina todos los datos del espacio de trabajo permanentemente."
+      },
+      "members": {
+        "title": "Miembros",
+        "description": "{{count}} de {{seats}} asientos utilizados.",
+        "invite": "Invitar",
+        "empty": "Aún no hay miembros.",
+        "roleUpdated": "Rol actualizado",
+        "promote": "Hacer administrador",
+        "demote": "Hacer miembro",
+        "transferOwnership": "Transferir propiedad",
+        "remove": "Quitar del espacio de trabajo"
+      },
+      "invites": {
+        "title": "Invitaciones pendientes",
+        "resend": "Reenviar",
+        "revoke": "Revocar",
+        "resent": "Invitación reenviada"
+      },
+      "teams": {
+        "title": "Equipos",
+        "description": "Agrupa miembros para compartir con alcance limitado.",
+        "new": "Nuevo equipo",
+        "empty": "Aún no hay equipos.",
+        "createFirst": "Crea tu primer equipo",
+        "createTitle": "Crear equipo",
+        "nameLabel": "Nombre del equipo",
+        "descriptionLabel": "Descripción",
+        "memberCount": "{{count}} miembros"
+      },
+      "billing": {
+        "title": "Facturación",
+        "description": "Plan, asientos y pago.",
+        "plan": "Plan",
+        "seats": "Asientos",
+        "nextInvoice": "Próxima factura",
+        "manageStripe": "Administrar en Stripe",
+        "startSubscription": "Iniciar suscripción"
+      },
+      "developer": {
+        "title": "Claves API",
+        "description": "Acceso programático limitado a este espacio de trabajo.",
+        "empty": "Aún no hay claves API. Crea una para integrarte con este espacio de trabajo.",
+        "new": "Nueva clave",
+        "create": "Crear clave",
+        "createTitle": "Crear clave API",
+        "createDescription": "Elige los permisos que necesita esta clave. Puedes revocarla en cualquier momento.",
+        "nameLabel": "Nombre de la clave",
+        "namePlaceholder": "Integración de producción",
+        "revoke": "Revocar clave",
+        "lastUsed": "Último uso {{date}}",
+        "neverUsed": "Nunca utilizada",
+        "keyCreatedTitle": "Clave API creada",
+        "keyCreatedDescription": "Copia esta clave ahora — no podrás verla de nuevo."
       }
     }
   },
   "models": {
+    "learnMore": "瞭解更多",
     "descriptions": {
       "parakeet": {
-        "parakeet_tdt_0_6b_v3": "快速多語言 ASR，自動語言偵測（25 種語言）"
+        "parakeet_tdt_0_6b_v3": "快速多語言 ASR，自動語言偵測（25 種語言）",
+        "parakeet_unified_en_0_6b": "僅英語 ASR，最先進的準確度（平均 WER 5.91%）"
       },
       "whisper": {
         "tiny": "最快速，品質較低",
@@ -1345,7 +1736,7 @@
         "mistral_voxtral_mini_latest": "快速多語言轉錄"
       },
       "cloud": {
-        "openai_gpt_5_2": "最新旗艦推理模型",
+        "openai_gpt_5_2": "強大的推理模型",
         "openai_gpt_5_mini": "快速且經濟實惠",
         "openai_gpt_5_nano": "超快速，低延遲",
         "openai_gpt_4_1": "穩健基礎，1M 上下文",
@@ -1353,7 +1744,6 @@
         "openai_gpt_4_1_nano": "最低延遲的 GPT-4.1",
         "anthropic_claude_sonnet_4_5": "均衡表現",
         "anthropic_claude_haiku_4_5": "快速且接近頂尖智慧",
-        "anthropic_claude_opus_4_5": "最強大的 Claude 模型",
         "gemini_gemini_3_pro_preview": "新一代旗艦模型，擅長複雜推理",
         "gemini_gemini_3_flash_preview": "超快速、高性能的新一代模型",
         "gemini_gemini_2_5_flash_lite": "最低延遲和成本",
@@ -1365,7 +1755,19 @@
         "groq_llama_4_scout": "Meta 高效多模態，750 T/sec",
         "groq_compound": "Groq Compound 系統，450 T/sec",
         "groq_compound_mini": "快速 Compound 系統，3x 更低延遲",
-        "groq_kimi_k2_0905": "Moonshot AI 1T MoE，256K 上下文"
+        "groq_kimi_k2_0905": "Moonshot AI 1T MoE，256K 上下文",
+        "openai_gpt_5_5": "複雜推理前沿模型",
+        "anthropic_claude_opus_4_7": "最強大的 Claude 模型",
+        "anthropic_claude_opus_4_6": "Previous Opus generation, 1M context",
+        "anthropic_claude_opus_4_5": "Earlier Opus model"
+      },
+      "enterprise": {
+        "bedrock_claude_haiku_4_5": "快速且低成本。適合文字清理。",
+        "bedrock_claude_sonnet_4_6": "均衡效能。建議作為智慧助手模式的預設模型。",
+        "bedrock_claude_opus_4_7": "最高智能。適用於複雜的智慧助手模式任務。",
+        "bedrock_nova_lite": "最便宜的選擇。AWS 原生，適合高流量場景。",
+        "vertex_gemini_2_5_flash": "Fast multimodal model via Vertex",
+        "vertex_gemini_2_5_pro": "Advanced reasoning via Vertex"
       },
       "local": {
         "qwen_qwen3_5_9b_q4_k_m": "強大的混合模型",
@@ -1382,12 +1784,22 @@
         "qwen_qwen2_5_7b_instruct_q5_k_m": "大型模型，高品質推理（Q5_K_M）",
         "mistral_mistral_7b_instruct_v0_3_q4_k_m": "快速且高效的指令模型",
         "mistral_mistral_7b_instruct_v0_3_q5_k_m": "更高品質的指令模型",
+        "mistral_nemo_12b_instruct_q4_k_m": "Mistral 12B 模型，優秀的多語言性能",
         "llama_llama_3_2_1b_instruct_q4_k_m": "極小型模型，適合邊緣裝置",
         "llama_llama_3_2_3b_instruct_q4_k_m": "小巧但有能力的多語言模型",
         "llama_llama_3_1_8b_instruct_q4_k_m": "強大的高效能模型",
         "openai_oss_gpt_oss_20b_mxfp4": "OpenAI 開放權重模型，適用於消費級硬體",
         "gemma_gemma_3_4b_it_q4_k_m": "Google 開放權重模型，速度與品質的絕佳平衡",
+        "gemma_gemma_4_31b_it_q4_k_m": "Google 最大的 Gemma 4，最佳品質",
+        "gemma_gemma_4_26b_a4b_it_q4_k_m": "Google MoE Gemma 4，4B 活躍參數，速度快",
+        "gemma_gemma_4_e4b_it_q4_k_m": "Google 最新多模態模型，強大推理能力",
+        "gemma_gemma_4_e2b_it_q4_k_m": "Google 緊湊型 Gemma 4，快速高效",
+        "gemma_gemma_3_12b_it_q4_k_m": "Google 中型模型，強推理能力",
         "gemma_gemma_3_1b_it_q4_k_m": "超快 Google 模型，最適合短語音清理"
+      },
+      "diarization": {
+        "segmentation": "用於說話者分離的語音邊界偵測",
+        "embedding_en": "用於說話者辨識的聲紋提取"
       }
     }
   },
@@ -1464,13 +1876,22 @@
     }
   },
   "notes": {
+    "sidebar": {
+      "newNote": "新增筆記",
+      "searchNotes": "搜尋筆記",
+      "actions": "動作"
+    },
     "folders": {
       "title": "資料夾",
       "soon": "即將推出",
       "folderName": "資料夾名稱",
       "couldNotCreate": "無法建立資料夾",
       "couldNotRename": "無法重新命名資料夾",
-      "couldNotDelete": "無法刪除資料夾"
+      "couldNotDelete": "無法刪除資料夾",
+      "deleteTitle": "刪除資料夾？",
+      "deleteDescription": "這將永久刪除「{{name}}」及其 {{count}} 則筆記。此操作無法復原。",
+      "deleteDescriptionEmpty": "這將永久刪除「{{name}}」。此操作無法復原。",
+      "deleteConfirm": "刪除資料夾和筆記"
     },
     "list": {
       "title": "筆記",
@@ -1491,15 +1912,30 @@
       "export": "匯出",
       "asMarkdown": "匯出為 Markdown",
       "asPlainText": "匯出為純文字",
+      "asTranscriptText": "匯出為純文字 (.txt)",
+      "asSubtitles": "匯出為字幕 (.srt)",
+      "asJson": "匯出為 JSON (.json)",
+      "asTranscriptMarkdown": "匯出為 Markdown (.md)",
       "raw": "原始",
       "enhanced": "已增強",
       "saving": "儲存中",
-      "wordsCount": "{{count}} 個字",
       "startWriting": "開始撰寫...",
       "staleIndicator": "內容在增強後已變更",
       "live": "即時",
       "transcript": "轉錄",
-      "notes": "筆記"
+      "notes": "筆記",
+      "conversationWillAppear": "對話將顯示在這裡...",
+      "linkedEvent": "關聯行程",
+      "noFolder": "無資料夾",
+      "participants": "參與者"
+    },
+    "participants": {
+      "attendee": "位與會者",
+      "attendees": "位與會者",
+      "addAttendees": "新增與會者",
+      "addPlaceholder": "新增與會者...",
+      "typeEmail": "輸入電子郵件以新增...",
+      "me": "（我）"
     },
     "upload": {
       "title": "上傳音訊",
@@ -1529,6 +1965,7 @@
       "selectFolder": "選擇資料夾",
       "transcriptionFailed": "轉錄失敗",
       "errorOccurred": "發生錯誤",
+      "noSpeechDetected": "未在此音訊中偵測到語音。",
       "noProviderTitle": "尚未設定轉錄服務供應商",
       "noProviderDescription": "新增 API Key 或下載本機模型以開始轉錄。",
       "noProviderAction": "開啟轉錄設定",
@@ -1551,13 +1988,17 @@
       "comingSoon": "即將推出",
       "back": "返回"
     },
+    "meetingPill": {
+      "returnToNote": "返回到錄音"
+    },
     "context": {
       "moveToFolder": "移動到資料夾",
       "delete": "刪除",
       "rename": "重新命名",
       "searchFolders": "搜尋資料夾...",
       "noResults": "找不到資料夾",
-      "newFolder": "新增資料夾"
+      "newFolder": "新增資料夾",
+      "showInFileManager": "在{{manager}}中顯示"
     },
     "actions": {
       "manage": "管理動作...",
@@ -1572,6 +2013,9 @@
       "update": "更新",
       "cancel": "取消",
       "noActions": "尚無自訂動作",
+      "promptLabel": "提示詞",
+      "emptyEditorTitle": "選擇動作",
+      "emptyEditorDescription": "從列表中選擇一個動作或建立新動作",
       "runAction": "執行 {{name}}",
       "selectAction": "選擇動作",
       "done": "完成",
@@ -1630,6 +2074,48 @@
     },
     "enhance": {
       "title": "增強錯誤"
+    },
+    "speaker": {
+      "you": "你",
+      "them": "對方",
+      "label": "發言者 {{n}}",
+      "identifyingSpeakers": "正在辨識發言者...",
+      "liveAccuracyHint": "仍在辨識發言者。通話結束後，標籤準確度會提升。",
+      "speakersIdentified": "已辨識發言者",
+      "typeNamePlaceholder": "輸入姓名",
+      "knownSpeakers": "已知發言者",
+      "meetingAttendees": "會議參與者",
+      "assignName": "指派姓名",
+      "isThisPerson": "這是{{name}}嗎？",
+      "selected": "已選 {{n}} 個",
+      "assignTo": "指派給…",
+      "deselectAll": "取消全選",
+      "confirmed": "已確認",
+      "nameAssigned": "姓名已指派",
+      "state": {
+        "provisional": "暫定",
+        "confirmed": "已確認",
+        "suggested": "建議",
+        "locked": "鎖定"
+      },
+      "createNewPrefix": "建立",
+      "emailPlaceholder": "name@example.com",
+      "nameOrEmailPlaceholder": "輸入姓名或電子郵件",
+      "addContact": "新增聯絡人",
+      "save": "儲存",
+      "cancel": "取消",
+      "pill": {
+        "identifying": "正在辨識發言者",
+        "notLabeled": "發言者未標記",
+        "finalizing": "正在完成發言者辨識…",
+        "justYou": "只有你",
+        "defaultingHint": "預設 1 位其他人",
+        "toggleAria": "切換此錄音的發言者辨識",
+        "incAria": "增加預期發言人數",
+        "decAria": "減少預期發言人數",
+        "othersInCall_one": "通話中還有 {{count}} 人",
+        "othersInCall_other": "通話中還有 {{count}} 人"
+      }
     }
   },
   "dictionary": {
@@ -1656,13 +2142,38 @@
     "support": "支援",
     "limitReached": "已達每週上限",
     "limitReachedDescription": "升級至 Pro 即可無限轉錄。",
-    "upgradeToPro": "升級至 Pro",
+    "viewPlans": "查看方案",
     "upgradeTitle": "升級至 Pro",
     "upgradeDescription": "無限轉錄、即時轉錄等更多功能。",
     "learnMore": "瞭解更多",
     "integrations": "整合",
     "defaultUser": "使用者",
-    "notSignedIn": "尚未登入"
+    "notSignedIn": "尚未登入",
+    "chat": "聊天",
+    "inviteTeammate": "Invitar compañero",
+    "createWorkspace": "Crear espacio de trabajo"
+  },
+  "chat": {
+    "newChat": "新對話",
+    "search": "搜尋對話...",
+    "archived": "已封存",
+    "noConversations": "開始你的第一個對話",
+    "selectChat": "選擇一個對話或開始新的對話",
+    "noResults": "沒有符合的對話",
+    "today": "今天",
+    "yesterday": "昨天",
+    "previousWeek": "最近 7 天",
+    "older": "更早",
+    "archive": "封存",
+    "unarchive": "取消封存",
+    "delete": "刪除",
+    "deleteConfirm": "此對話將被永久刪除，無法復原。",
+    "editTitle": "雙擊編輯標題",
+    "untitled": "無標題",
+    "searchChats": "搜尋聊天",
+    "searchTitle": "搜尋對話",
+    "searchDescription": "搜尋所有對話",
+    "newChatEmpty": "詢問關於筆記、轉錄或其他任何內容"
   },
   "usage": {
     "approachingLimit": "即將達到每週上限",
@@ -1685,9 +2196,16 @@
     "upgradeUnlimited": "升級至 Pro — 無限轉錄"
   },
   "support": {
+    "documentation": "文件",
     "joinDiscord": "加入 Discord",
     "contactSupport": "聯絡支援",
     "submitBug": "提交 Bug"
+  },
+  "postMigration": {
+    "title": "歡迎回到 OpenWhispr",
+    "description": "您的筆記與設定已從先前版本保留下來。不過 macOS 會將此視為一款全新的應用程式，因此需要您重新授予部分權限。",
+    "done": "完成",
+    "remindLater": "稍後提醒我"
   },
   "apiKeyInput": {
     "placeholder": "輸入你的 API Key",
@@ -1715,7 +2233,8 @@
   "app": {
     "toasts": {
       "hotkeyChanged": {
-        "title": "快捷鍵已變更"
+        "title": "快捷鍵已變更",
+        "description": "\"{{original}}\" 無法使用，已改用 \"{{fallback}}\"。您可以在設定中變更。"
       },
       "hotkeyUnavailable": {
         "title": "快捷鍵無法使用",
@@ -1742,27 +2261,52 @@
       "stopListening": "停止錄音",
       "startListening": "開始錄音",
       "hideForNow": "暫時隱藏"
+    }
+  },
+  "dictationAgent": {
+    "enabled": "Enable voice agent",
+    "enabledDescription": "Dictate instructions to your agent. Activate by saying \"{{agentName}}\". Configurable below.",
+    "modes": {
+      "openwhispr": "OpenWhispr Cloud",
+      "openwhisprDesc": "Use the OpenWhispr-managed agent — no API key needed.",
+      "providers": "Bring your own key",
+      "providersDesc": "Connect to OpenAI, Anthropic, Gemini, or Groq with your own API key.",
+      "local": "Local",
+      "localDesc": "Run a local LLM on your device — fully private.",
+      "selfHosted": "Self-hosted",
+      "selfHostedDesc": "Point at a self-hosted OpenAI-compatible endpoint.",
+      "enterprise": "Enterprise",
+      "enterpriseDesc": "Use AWS Bedrock, Azure OpenAI, or Google Vertex."
     },
-    "oauth": {
-      "redirectTitle": "正在跳轉到應用程式...",
-      "closeTab": "您可以關閉此分頁。"
+    "prompt": {
+      "title": "Agent prompt",
+      "description": "The system prompt used when the wake word is detected. Falls back to the built-in default."
     }
   },
   "agentMode": {
     "settings": {
-      "title": "智慧助手模式",
-      "description": "使用獨立AI模型的語音聊天助手",
-      "enabled": "啟用智慧助手模式",
-      "enabledDescription": "使用獨立熱鍵開啟語音聊天覆蓋層",
       "hotkey": "助手熱鍵",
       "hotkeyDescription": "切換助手覆蓋層的熱鍵",
+      "clearHotkey": "移除快捷鍵",
       "model": "助手模型",
       "modelDescription": "用於助手對話的AI模型",
       "systemPrompt": "系統提示詞",
       "systemPromptDescription": "助手的自訂指令",
       "systemPromptPlaceholder": "輸入自訂系統提示詞...",
+      "modes": {
+        "openwhispr": "OpenWhispr Cloud",
+        "providers": "雲端供應商",
+        "local": "本機",
+        "selfHosted": "自架主機",
+        "openwhisprDesc": "準確可靠，無需設定。",
+        "providersDesc": "使用自己的 API 金鑰。",
+        "localDesc": "裝置端模型，完全私密。",
+        "selfHostedDesc": "你自己網路上的伺服器。",
+        "enterprise": "企業級",
+        "enterpriseDesc": "使用你組織的雲端帳號（AWS、Azure、GCP）。"
+      },
       "openwhisprCloud": "OpenWhispr Cloud",
-      "openwhisprCloudDescription": "使用 OpenWhispr 的雲端 AI 進行助手對話",
+      "openwhisprCloudDescription": "準確可靠，無需設定。",
       "customSetup": "自訂配置 (BYOK)",
       "customSetupDescription": "使用自己的 API 金鑰並選擇偏好的模型"
     },
@@ -1774,7 +2318,7 @@
       "newConversation": "新建",
       "copyToClipboard": "複製到剪貼簿",
       "copied": "已複製！",
-      "emptyState": "按住 {{hotkey}} 開始對話",
+      "emptyState": "隨便問我",
       "errorPrefix": "錯誤"
     },
     "titleBar": {
@@ -1787,7 +2331,30 @@
       "toClose": "關閉",
       "listening": "正在聆聽...",
       "transcribing": "正在轉錄...",
-      "thinking": "正在思考..."
+      "thinking": "正在思考...",
+      "typeMessage": "輸入訊息...",
+      "send": "傳送"
+    },
+    "tools": {
+      "search_notesStatus": "正在搜尋筆記...",
+      "web_searchStatus": "正在搜尋網頁...",
+      "copy_to_clipboardStatus": "正在複製到剪貼簿...",
+      "get_calendar_eventsStatus": "正在查看行事曆...",
+      "get_noteStatus": "正在讀取筆記...",
+      "create_noteStatus": "正在建立筆記...",
+      "update_noteStatus": "正在更新筆記...",
+      "copiedToClipboard": "已複製到剪貼簿",
+      "foundNotes": "找到 {{count}} 則筆記",
+      "foundNotes_plural": "找到 {{count}} 則筆記",
+      "searchResults": "找到 {{count}} 項結果",
+      "searchResults_plural": "找到 {{count}} 項結果",
+      "openNote": "開啟筆記",
+      "calendarEvents": "找到 {{count}} 個行程",
+      "calendarEvents_plural": "找到 {{count}} 個行程",
+      "noResults": "未找到結果",
+      "error": "工具錯誤",
+      "unknownTool": "未知工具：{{name}}",
+      "invalidArgs": "{{name}} 的工具參數無效"
     }
   },
   "integrations": {
@@ -1795,17 +2362,65 @@
     "description": "連接服務以增強您的工作流程",
     "googleCalendar": {
       "title": "Google 日曆",
-      "description": "連接日曆以自動偵測會議並錄製轉錄。",
+      "optional": "可選",
+      "description": "從日曆自動填入會議名稱和參與者。",
       "connect": "連接 Google 日曆",
       "connecting": "連接中...",
       "connected": "已連接",
       "addAnother": "新增其他日曆",
+      "primaryOnly": "僅同步主要日曆",
+      "primaryOnlyDescription": "忽略他人分享給你的日曆事件。",
       "disconnect": "中斷連接",
       "disconnectConfirm": "中斷 {{email}} 的連接？",
       "disconnectDescription": "將不再從此日曆記錄會議筆記。",
-      "screenRecordingRequired": "需要系統音訊權限",
-      "screenRecordingDescription": "要轉錄會議，OpenWhispr 需要系統音訊權限來錄製其他參與者的音訊。我們絕不會錄製您的螢幕。您將被引導至系統設定以啟用此權限。",
+      "systemAudioRequired": "需要系統音訊權限",
+      "systemAudioDescription": "要轉錄會議，OpenWhispr 需要系統音訊權限來錄製其他參與者的音訊。我們絕不會錄製您的螢幕。您將被引導至系統設定以啟用此權限。",
       "openSettings": "打開系統設定"
+    },
+    "sections": {
+      "calendar": "行事曆",
+      "api": "API",
+      "mcp": "MCP",
+      "cli": "CLI"
+    },
+    "api": {
+      "title": "API 金鑰",
+      "description": "管理用於程式存取的 API 金鑰",
+      "proRequired": "升級到付費方案以存取 API",
+      "manage": "管理金鑰",
+      "viewPlans": "查看方案",
+      "dialogTitle": "API 金鑰"
+    },
+    "mcp": {
+      "title": "將筆記帶到你的 AI 工具中",
+      "description": "在 Claude、ChatGPT 和 Cursor 中與你的筆記一起聊天、搜尋和工作。",
+      "step1": "在你的 AI 工具中，使用公開 URL 新增 OpenWhispr MCP",
+      "step2": "在上方建立具有所需權限的 API 金鑰。",
+      "step3": "將金鑰貼上為 Authorization 標頭以連線。",
+      "learnMore": "瞭解更多",
+      "viewPlans": "查看方案",
+      "copyUrl": "複製 MCP URL",
+      "proRequired": "升級到付費方案，以將 OpenWhispr 連接到 Claude、ChatGPT 和 Cursor。",
+      "copied": "已複製"
+    },
+    "cli": {
+      "title": "命令列存取",
+      "description": "讓你的智慧助手透過終端機存取你的筆記。",
+      "installLabel": "安裝",
+      "learnMore": "查看文件",
+      "copyDocsLink": "複製文件連結",
+      "docsLinkCopied": "已複製文件連結",
+      "viewPlans": "查看方案",
+      "local": {
+        "label": "本機",
+        "freeBadge": "免費",
+        "description": "直接讀取你的本機筆記。無需登入或 API 金鑰 — OpenWhispr 執行時即可使用。"
+      },
+      "cloud": {
+        "label": "雲端",
+        "description": "使用 API 金鑰在多台裝置間同步。",
+        "proRequired": "升級到付費方案以在雲端模式下使用 CLI。"
+      }
     },
     "plan": {
       "title": "您的方案",
@@ -1817,13 +2432,6 @@
       "pro": "Pro",
       "proLimit": "無限",
       "upgrade": "升級"
-    },
-    "beta": {
-      "title": "會議錄製功能正在測試中",
-      "description": "我們仍在探索將此功能更好地融入產品的方式，非常歡迎您的回饋！",
-      "freeTier": "免費方案：每月 5 小時",
-      "proTier": "Pro 方案：每月 20 小時",
-      "feedback": "需要超過 20 小時？請聯繫 gabe@openwhispr.com"
     },
     "notABot": {
       "title": "OpenWhispr 是會議錄製工具，不是機器人",
@@ -1869,7 +2477,7 @@
     "now": "進行中",
     "join": "加入",
     "untitledEvent": "無標題事件",
-    "screenRecordingRequired": "需要系統音訊權限來錄製其他參與者的音訊。",
+    "systemAudioRequired": "需要系統音訊權限來錄製其他參與者的音訊。",
     "openSettings": "打開系統設定",
     "signInRequired": "登入以使用會議錄製",
     "signInDescription": "建立帳戶或登入以錄製和轉錄會議。",
@@ -1900,7 +2508,37 @@
     "deleteNote": "刪除筆記",
     "deleteConfirmTitle": "刪除筆記？",
     "deleteConfirmDescription": "此筆記將被永久刪除，無法復原。",
-    "deleteConfirm": "刪除"
+    "deleteConfirm": "刪除",
+    "share": {
+      "button": "分享",
+      "dialog": {
+        "title": "分享筆記",
+        "searchPlaceholder": "透過電子郵件新增成員",
+        "emailLabel": "收件人電子郵件",
+        "shareButton": "分享",
+        "copyLink": "複製連結",
+        "copied": "已複製",
+        "owner": "擁有者",
+        "pending": "待處理",
+        "accepted": "已取得存取權",
+        "resend": "重新傳送邀請",
+        "revoke": "移除",
+        "invitationActions": "邀請操作",
+        "permissionRequired": "只有筆記的擁有者可以變更分享設定。",
+        "visibility": {
+          "label": "可見性",
+          "link": "任何擁有連結的人",
+          "domain": "{{domain}} 中擁有連結的所有人",
+          "invited": "僅限受邀者"
+        },
+        "error": {
+          "invalidEmail": "請輸入有效的電子郵件地址",
+          "alreadyInvited": "{{email}} 已被邀請",
+          "inviteFailed": "無法傳送邀請。請再試一次。",
+          "linkUnavailable": "產生或更換連結後即可複製"
+        }
+      }
+    }
   },
   "commandSearch": {
     "title": "搜尋",
@@ -1917,6 +2555,138 @@
       "navigate": "導覽",
       "open": "開啟",
       "dismiss": "關閉"
+    }
+  },
+  "updateNotification": {
+    "title": "OpenWhispr 有可用更新",
+    "body": "版本 {{version}} 已可下載",
+    "cta": "立即更新"
+  },
+  "permissionsGate": {
+    "title": "需要權限",
+    "description": "OpenWhispr 需要一些權限才能在此電腦上正常運作。",
+    "continue": "繼續"
+  },
+  "apiKeysSection": {
+    "title": "API 金鑰",
+    "description": "建立金鑰以程式化方式存取 OpenWhispr API。",
+    "docsLink": "API 文件",
+    "empty": "尚無 API 金鑰",
+    "createButton": "建立 API 金鑰",
+    "create": {
+      "title": "建立 API 金鑰",
+      "nameLabel": "金鑰名稱",
+      "namePlaceholder": "例如：我的整合",
+      "scopesLabel": "權限",
+      "expiryLabel": "有效期限",
+      "expiryOptions": {
+        "never": "永不過期",
+        "30days": "30 天",
+        "60days": "60 天",
+        "90days": "90 天",
+        "1year": "1 年"
+      },
+      "submit": "建立",
+      "cancel": "取消"
+    },
+    "created": {
+      "title": "API 金鑰已建立",
+      "warning": "請立即複製此金鑰，它將不會再次顯示。",
+      "copied": "已複製！",
+      "copyButton": "複製到剪貼簿",
+      "done": "完成"
+    },
+    "scopes": {
+      "notesRead": "讀取筆記",
+      "notesWrite": "建立與編輯筆記",
+      "transcriptionsRead": "讀取轉錄"
+    },
+    "revoke": {
+      "button": "撤銷",
+      "confirm": "撤銷此金鑰？使用它的整合將停止運作。",
+      "success": "API 金鑰已撤銷"
+    },
+    "neverUsed": "從未使用",
+    "lastUsed": "上次使用 {{time}}",
+    "maxKeysReached": "最多允許 {{max}} 個金鑰",
+    "errors": {
+      "loadFailed": "無法載入 API 金鑰",
+      "createFailed": "無法建立 API 金鑰",
+      "revokeFailed": "無法撤銷 API 金鑰"
+    }
+  },
+  "embeddedChat": {
+    "askPlaceholder": "隨便問點什麼...",
+    "send": "傳送",
+    "title": "聊天",
+    "emptyState": "就這條筆記提個問題",
+    "dock": "固定到側邊欄",
+    "undock": "從側邊欄取消固定",
+    "close": "關閉聊天",
+    "newChat": "新對話",
+    "conversationSelector": "切換對話"
+  },
+  "transcriptionPreview": {
+    "label": "預覽",
+    "listening": "正在聆聽...",
+    "polishing": "正在潤飾...",
+    "ready": "就緒",
+    "copy": "複製",
+    "copied": "已複製",
+    "waitingForInput": "說點什麼..."
+  },
+  "transcript": {
+    "speaker": {
+      "you": "你",
+      "others": "其他人"
+    }
+  },
+  "workspaces": {
+    "switcher": {
+      "personal": "Personal",
+      "workspaces": "Espacios de trabajo",
+      "empty": "Aún no hay espacios de trabajo",
+      "create": "Crear espacio de trabajo…"
+    },
+    "create": {
+      "title": "Crear espacio de trabajo",
+      "description": "Los espacios de trabajo te permiten colaborar, compartir notas y administrar la facturación.",
+      "nameLabel": "Nombre del espacio de trabajo",
+      "namePlaceholder": "Acme Corp",
+      "submit": "Crear espacio de trabajo",
+      "submitting": "Creando…",
+      "errorTitle": "No se pudo crear el espacio de trabajo"
+    },
+    "created": {
+      "title": "Espacio de trabajo creado",
+      "description": "Ahora eres el propietario de {{name}}."
+    },
+    "invite": {
+      "title": "Invitar a {{workspace}}",
+      "description": "Agrega compañeros por correo. Recibirán un enlace para unirse.",
+      "emailLabel": "Correo electrónico",
+      "roleLabel": "Rol",
+      "teamsLabel": "Agregar a equipos",
+      "submit": "Enviar invitación",
+      "submitting": "Enviando…",
+      "sentTitle": "Invitación enviada",
+      "sentDescription": "Enviamos una invitación a {{email}}.",
+      "errorTitle": "No se pudo enviar la invitación",
+      "role": {
+        "admin": "Administrador",
+        "member": "Miembro"
+      }
+    },
+    "accept": {
+      "title": "Unirse al espacio de trabajo",
+      "description": "{{inviter}} te invitó a unirte a {{workspace}} como {{role}}.",
+      "loading": "Cargando invitación…",
+      "accept": "Aceptar invitación",
+      "accepting": "Aceptando…",
+      "signInToAccept": "Inicia sesión para aceptar",
+      "successTitle": "Te uniste",
+      "successDescription": "Bienvenido a {{name}}.",
+      "errorTitle": "No se pudo aceptar la invitación"
     }
   }
 }

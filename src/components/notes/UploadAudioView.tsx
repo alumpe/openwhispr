@@ -29,23 +29,24 @@ import { findDefaultFolder, MEETINGS_FOLDER_NAME } from "./shared";
 import { useAuth } from "../../hooks/useAuth";
 import { useUsage } from "../../hooks/useUsage";
 import { useSettings } from "../../hooks/useSettings";
-import { withSessionRefresh } from "../../lib/neonAuth";
-import reasoningService from "../../services/ReasoningService";
+import { withSessionRefresh } from "../../lib/auth";
 import { getAllReasoningModels } from "../../models/ModelRegistry";
-import { useSettingsStore, selectIsCloudReasoningMode } from "../../stores/settingsStore";
+import {
+  useSettingsStore,
+  selectIsCloudCleanupMode,
+  getSettings,
+} from "../../stores/settingsStore";
+import { generateNoteTitle } from "../../utils/generateTitle";
 
 const TranscriptionModelPicker = React.lazy(() => import("../TranscriptionModelPicker"));
 
 type UploadState = "idle" | "selected" | "transcribing" | "complete" | "error";
 
-const SUPPORTED_EXTENSIONS = ["mp3", "wav", "m4a", "webm", "ogg", "flac", "aac"];
+const SUPPORTED_EXTENSIONS = ["mp3", "wav", "m4a", "webm", "ogg", "oga", "flac", "aac"];
 
 const BYOK_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB — hard limit for bring-your-own-key
 const CLOUD_FREE_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB — free plan cloud limit
 const CLOUD_PRO_MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB — pro plan cloud limit
-
-const TITLE_SYSTEM_PROMPT =
-  "Generate a concise 3-8 word title for these transcribed notes. Return ONLY the title text, nothing else — no quotes, no prefix, no explanation.";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -114,21 +115,17 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     cloudTranscriptionMode,
     setCloudTranscriptionMode,
     openaiApiKey,
-    setOpenaiApiKey,
     groqApiKey,
-    setGroqApiKey,
     mistralApiKey,
-    setMistralApiKey,
     customTranscriptionApiKey,
-    setCustomTranscriptionApiKey,
     updateTranscriptionSettings,
   } = useSettings();
 
-  const isCloudReasoning = useSettingsStore(selectIsCloudReasoningMode);
-  const effectiveReasoningModel = useSettingsStore((s) =>
-    selectIsCloudReasoningMode(s) ? "" : s.reasoningModel
+  const isCloudCleanup = useSettingsStore(selectIsCloudCleanupMode);
+  const effectiveCleanupModel = useSettingsStore((s) =>
+    selectIsCloudCleanupMode(s) ? "" : s.cleanupModel
   );
-  const useReasoningModel = useSettingsStore((s) => s.useReasoningModel);
+  const useCleanupModel = useSettingsStore((s) => s.useCleanupModel);
 
   const isOpenWhisprCloud =
     isSignedIn && cloudTranscriptionMode === "openwhispr" && !useLocalWhisper;
@@ -267,21 +264,11 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
   };
 
   const generateTitle = async (text: string): Promise<string> => {
-    if (!useReasoningModel) return "";
-    const model = isCloudReasoning
-      ? ""
-      : effectiveReasoningModel || getAllReasoningModels()[0]?.value;
-    if (!model && !isCloudReasoning) return "";
-    try {
-      const title = await reasoningService.processText(text.slice(0, 2000), model, null, {
-        systemPrompt: TITLE_SYSTEM_PROMPT,
-        temperature: 0.3,
-      });
-      const cleaned = title.trim().replace(/^["']|["']$/g, "");
-      return cleaned.length > 0 && cleaned.length < 100 ? cleaned : "";
-    } catch {
-      return "";
-    }
+    if (!useCleanupModel) return "";
+    if (!getSettings().autoGenerateNoteTitle) return "";
+    const model = isCloudCleanup ? "" : effectiveCleanupModel || getAllReasoningModels()[0]?.value;
+    if (!model && !isCloudCleanup) return "";
+    return generateNoteTitle(text, model);
   };
 
   const handleBrowse = async () => {
@@ -418,7 +405,11 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
         setState("complete");
       } else {
         setProgress(0);
-        setError(res.error || t("notes.upload.transcriptionFailed"));
+        setError(
+          res.code === "NO_SPEECH_DETECTED"
+            ? t("notes.upload.noSpeechDetected")
+            : res.error || t("notes.upload.transcriptionFailed")
+        );
         setState("error");
       }
     } catch (err) {
@@ -538,14 +529,6 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
           updateTranscriptionSettings({ useLocalWhisper: isLocal });
           if (isLocal) setCloudTranscriptionMode("byok");
         }}
-        openaiApiKey={openaiApiKey}
-        setOpenaiApiKey={setOpenaiApiKey}
-        groqApiKey={groqApiKey}
-        setGroqApiKey={setGroqApiKey}
-        mistralApiKey={mistralApiKey}
-        setMistralApiKey={setMistralApiKey}
-        customTranscriptionApiKey={customTranscriptionApiKey}
-        setCustomTranscriptionApiKey={setCustomTranscriptionApiKey}
         cloudTranscriptionBaseUrl={cloudTranscriptionBaseUrl}
         setCloudTranscriptionBaseUrl={setCloudTranscriptionBaseUrl}
         variant="settings"
@@ -679,39 +662,35 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
       </div>
 
       <Dialog open={showNewFolderDialog} onOpenChange={setShowNewFolderDialog}>
-        <DialogContent className="sm:max-w-[320px] p-5 gap-3">
+        <DialogContent className="sm:max-w-95">
           <DialogHeader>
-            <DialogTitle className="text-sm">{t("notes.upload.newFolder")}</DialogTitle>
+            <DialogTitle>{t("notes.upload.newFolder")}</DialogTitle>
           </DialogHeader>
-          <Input
-            value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
-            placeholder={t("notes.upload.folderName")}
-            className="h-8 text-xs"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleCreateFolder();
-            }}
-          />
-          <DialogFooter className="gap-1.5">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-foreground/50">
+              {t("notes.upload.folderName")}
+            </label>
+            <Input
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              placeholder={t("notes.folders.folderName")}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreateFolder();
+              }}
+            />
+          </div>
+          <DialogFooter>
             <Button
               variant="ghost"
-              size="sm"
               onClick={() => {
                 setShowNewFolderDialog(false);
                 setNewFolderName("");
               }}
-              className="h-7 text-xs"
             >
               {t("notes.upload.cancel")}
             </Button>
-            <Button
-              variant="default"
-              size="sm"
-              onClick={handleCreateFolder}
-              disabled={!newFolderName.trim()}
-              className="h-7 text-xs"
-            >
+            <Button onClick={handleCreateFolder} disabled={!newFolderName.trim()}>
               {t("notes.upload.create")}
             </Button>
           </DialogFooter>
@@ -809,7 +788,7 @@ function IdleView({
       <input
         ref={fileInputRef}
         type="file"
-        accept=".mp3,.wav,.m4a,.webm,.ogg,.flac,.aac"
+        accept=".mp3,.wav,.m4a,.webm,.ogg,.oga,.flac,.aac"
         onChange={handleFileInputChange}
         className="sr-only"
         tabIndex={-1}

@@ -19,6 +19,7 @@ class MeetingDetectionEngine {
     this.activeDetections = new Map();
     this.preferences = { processDetection: true, audioDetection: true };
     this._userRecording = false;
+    this._meetingModeActive = false;
     this._notificationQueue = [];
     this._postRecordingCooldown = null;
     this._bindListeners();
@@ -54,6 +55,15 @@ class MeetingDetectionEngine {
 
     if (this.activeDetections.has(detectionId)) {
       debugLogger.debug("Detection already active, skipping", { detectionId }, "meeting");
+      return;
+    }
+
+    if (this._meetingModeActive) {
+      debugLogger.info(
+        "Suppressing detection — meeting mode already active",
+        { detectionId },
+        "meeting"
+      );
       return;
     }
 
@@ -131,14 +141,19 @@ class MeetingDetectionEngine {
       detection.event = event;
     }
 
-    this.windowManager.showMeetingNotification({
-      detectionId,
-      source,
-      key,
-      title,
-      body,
-      event,
-    });
+    const nPrefs = this.windowManager.notificationPrefs || {};
+    if (nPrefs.notificationsEnabled !== false && nPrefs.notifyMeetingDetection !== false) {
+      this.windowManager.showMeetingNotification({
+        detectionId,
+        source,
+        key,
+        title,
+        body,
+        event,
+      });
+    } else {
+      debugLogger.info("Meeting notification suppressed by user preference", {}, "meeting");
+    }
 
     this.broadcastToWindows("meeting-detected", {
       detectionId,
@@ -146,17 +161,6 @@ class MeetingDetectionEngine {
       data,
       imminentEvent,
     });
-  }
-
-  handleUserResponse(detectionId, action) {
-    debugLogger.info("User response to detection", { detectionId, action }, "meeting");
-    if (action === "dismiss") {
-      const detection = this.activeDetections.get(detectionId);
-      if (detection) {
-        this._dismiss();
-        detection.dismissed = true;
-      }
-    }
   }
 
   async handleNotificationResponse(detectionId, action) {
@@ -170,15 +174,43 @@ class MeetingDetectionEngine {
         const noteResult = this.databaseManager.saveNote(eventSummary, "", "meeting");
         const meetingsFolder = this.databaseManager.getMeetingsFolder();
 
-        if (noteResult?.note?.id && meetingsFolder?.id) {
-          await this.windowManager.createControlPanelWindow();
-          this.windowManager.snapControlPanelToMeetingMode();
-          this.windowManager.sendToControlPanel("navigate-to-meeting-note", {
-            noteId: noteResult.note.id,
-            folderId: meetingsFolder.id,
-            event: detection.event,
-          });
+        if (!noteResult?.note?.id || !meetingsFolder?.id) {
+          debugLogger.error(
+            "Meeting note creation failed",
+            { noteId: noteResult?.note?.id, folderId: meetingsFolder?.id },
+            "meeting"
+          );
+          this.activeDetections.delete(detectionId);
+          return;
         }
+
+        this._meetingModeActive = true;
+
+        this.broadcastToWindows("note-added", noteResult.note);
+
+        const isRealEvent =
+          detection.event?.calendar_id &&
+          detection.event.calendar_id !== "__detected__" &&
+          detection.event.calendar_id !== "__manual__";
+
+        if (isRealEvent) {
+          const calEvent = this.databaseManager.getCalendarEventById(detection.event.id);
+          const updates = { calendar_event_id: detection.event.id };
+          if (calEvent?.attendees) {
+            updates.participants = calEvent.attendees;
+          }
+          const updateResult = this.databaseManager.updateNote(noteResult.note.id, updates);
+          if (updateResult?.success && updateResult?.note) {
+            this.broadcastToWindows("note-updated", updateResult.note);
+          }
+        }
+
+        await this.windowManager.queueMeetingNoteNavigation({
+          noteId: noteResult.note.id,
+          folderId: meetingsFolder.id,
+          event: detection.event,
+          trigger: "calendar-join",
+        });
 
         this.audioActivityDetector.resetPrompt();
 
@@ -186,12 +218,106 @@ class MeetingDetectionEngine {
       } else if (action === "dismiss") {
         if (detection) {
           this._dismiss();
-          detection.dismissed = true;
         }
+        this.activeDetections.delete(detectionId);
       }
+    } catch (error) {
+      this._meetingModeActive = false;
+      debugLogger.error(
+        "Error handling notification response",
+        { error: error?.message, detectionId, action },
+        "meeting"
+      );
     } finally {
       this.windowManager.dismissMeetingNotification();
     }
+  }
+
+  async startManualMeeting() {
+    debugLogger.info("Starting manual meeting", {}, "meeting");
+
+    const activeEvents = this.databaseManager.getActiveEvents();
+    if (activeEvents?.length > 0) {
+      return this.joinCalendarMeeting(activeEvents[0].id, "hotkey");
+    }
+
+    this._meetingModeActive = true;
+
+    const event = {
+      id: `manual-${Date.now()}`,
+      calendar_id: "__manual__",
+      summary: "New note",
+      start_time: new Date().toISOString(),
+      end_time: new Date(Date.now() + 3600000).toISOString(),
+      is_all_day: 0,
+      status: "confirmed",
+      hangout_link: null,
+      conference_data: null,
+      organizer_email: null,
+      attendees_count: 0,
+    };
+
+    const noteResult = this.databaseManager.saveNote(event.summary, "", "meeting");
+    const meetingsFolder = this.databaseManager.getMeetingsFolder();
+
+    if (!noteResult?.note?.id || !meetingsFolder?.id) {
+      debugLogger.error(
+        "Manual meeting failed — missing note or folder",
+        { noteId: noteResult?.note?.id, folderId: meetingsFolder?.id },
+        "meeting"
+      );
+      this._meetingModeActive = false;
+      return;
+    }
+
+    this.broadcastToWindows("note-added", noteResult.note);
+
+    await this.windowManager.queueMeetingNoteNavigation({
+      noteId: noteResult.note.id,
+      folderId: meetingsFolder.id,
+      event,
+      trigger: "hotkey",
+    });
+  }
+
+  async joinCalendarMeeting(eventId, trigger = "calendar-join") {
+    this._meetingModeActive = true;
+    debugLogger.info("Joining calendar meeting", { eventId, trigger }, "meeting");
+
+    const calEvent = this.databaseManager.getCalendarEventById(eventId);
+    if (!calEvent) {
+      debugLogger.error("Calendar event not found", { eventId }, "meeting");
+      this._meetingModeActive = false;
+      return;
+    }
+
+    const noteResult = this.databaseManager.saveNote(calEvent.summary || "New note", "", "meeting");
+    const meetingsFolder = this.databaseManager.getMeetingsFolder();
+
+    if (!noteResult?.note?.id || !meetingsFolder?.id) {
+      debugLogger.error(
+        "Join calendar meeting failed — missing note or folder",
+        { noteId: noteResult?.note?.id, folderId: meetingsFolder?.id },
+        "meeting"
+      );
+      this._meetingModeActive = false;
+      return;
+    }
+
+    const updates = { calendar_event_id: calEvent.id };
+    if (calEvent.attendees) {
+      updates.participants = calEvent.attendees;
+    }
+    const updateResult = this.databaseManager.updateNote(noteResult.note.id, updates);
+
+    this.broadcastToWindows("note-added", updateResult?.note || noteResult.note);
+
+    await this.windowManager.queueMeetingNoteNavigation({
+      noteId: noteResult.note.id,
+      folderId: meetingsFolder.id,
+      event: calEvent,
+      trigger,
+    });
   }
 
   handleNotificationTimeout() {
@@ -207,6 +333,12 @@ class MeetingDetectionEngine {
 
   _flushNotificationQueue() {
     if (this._notificationQueue.length === 0) return;
+
+    if (this._meetingModeActive) {
+      debugLogger.info("Dropping queued notifications — meeting mode active", {}, "meeting");
+      this._notificationQueue = [];
+      return;
+    }
 
     debugLogger.info(
       "Flushing notification queue",
@@ -237,6 +369,15 @@ class MeetingDetectionEngine {
 
   _dismiss() {
     this.audioActivityDetector.dismiss();
+  }
+
+  setMeetingModeActive(active) {
+    this._meetingModeActive = active;
+    debugLogger.info("Meeting mode active state changed", { active }, "meeting");
+    if (!active) {
+      // Own mic usage during meeting mode sets hasPrompted=true; reset so future detections work
+      this.audioActivityDetector.resetPrompt();
+    }
   }
 
   setUserRecording(active) {
@@ -288,6 +429,7 @@ class MeetingDetectionEngine {
     this.meetingProcessDetector.stop();
     this.audioActivityDetector.stop();
     this.activeDetections.clear();
+    this._meetingModeActive = false;
     if (this._postRecordingCooldown) {
       clearTimeout(this._postRecordingCooldown);
       this._postRecordingCooldown = null;

@@ -1,11 +1,11 @@
 const http = require("http");
-const https = require("https");
 const crypto = require("crypto");
-const { shell } = require("electron");
+const { net, shell } = require("electron");
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const CALENDAR_SCOPE = "openid email https://www.googleapis.com/auth/calendar.readonly";
+const CALENDAR_SCOPE =
+  "openid email https://www.googleapis.com/auth/calendar.events.readonly https://www.googleapis.com/auth/calendar.calendarlist.readonly";
 const OAUTH_TIMEOUT_MS = 120000;
 const DEFAULT_DESKTOP_CALLBACK_URL = "https://openwhispr.com/auth/desktop-callback";
 
@@ -216,36 +216,28 @@ class GoogleCalendarOAuth {
     return tokens.access_token;
   }
 
-  _httpsPost(urlString, body) {
-    const url = new URL(urlString);
-    return new Promise((resolve, reject) => {
-      const req = https.request(
-        {
-          hostname: url.hostname,
-          port: 443,
-          path: url.pathname,
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Content-Length": Buffer.byteLength(body),
-          },
-        },
-        (res) => {
-          let data = "";
-          res.on("data", (chunk) => (data += chunk));
-          res.on("end", () => {
-            try {
-              resolve(JSON.parse(data));
-            } catch (e) {
-              reject(new Error(`Invalid JSON response: ${data.slice(0, 200)}`));
-            }
-          });
-        }
-      );
-      req.on("error", reject);
-      req.write(body);
-      req.end();
+  async revokeToken(token) {
+    const body = new URLSearchParams({ token }).toString();
+    try {
+      await this._httpsPost("https://oauth2.googleapis.com/revoke", body);
+    } catch {
+      // Best-effort — token may already be revoked or network unavailable
+    }
+  }
+
+  async _httpsPost(urlString, body) {
+    const response = await net.fetch(urlString, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+      useSessionCookies: false,
     });
+    const text = await response.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(`Invalid JSON response: ${text.slice(0, 200)}`);
+    }
   }
 }
 

@@ -16,6 +16,7 @@ export interface LocalModel {
   sizeBytes?: number;
   description: string;
   descriptionKey?: string;
+  specUrl?: string;
   isDownloaded?: boolean;
   downloaded?: boolean;
   recommended?: boolean;
@@ -155,7 +156,7 @@ export default function LocalModelPicker({
   }, [downloadingModel, downloadProgress, models]);
 
   return (
-    <div className={`${styles.container} ${className}`}>
+    <div className={className}>
       <ProviderTabs
         providers={providers}
         selectedId={selectedProvider}
@@ -166,7 +167,7 @@ export default function LocalModelPicker({
 
       {progressDisplay}
 
-      <div className="p-3">
+      <div className="mt-2">
         <h5 className={`${styles.header} mb-2`}>{t("common.availableModels")}</h5>
 
         <ModelCardList
@@ -174,9 +175,8 @@ export default function LocalModelPicker({
             (model): ModelCardOption => ({
               value: model.id,
               label: model.name,
-              description: model.descriptionKey
-                ? `${model.size} · ${t(model.descriptionKey, { defaultValue: model.description })}`
-                : model.size,
+              description: model.size,
+              specUrl: model.specUrl,
               icon: getProviderIcon(selectedProvider),
               invertInDark: isMonochromeProvider(selectedProvider),
               recommended: model.recommended,

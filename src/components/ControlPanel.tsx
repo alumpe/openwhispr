@@ -3,10 +3,11 @@ import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
 import { Download, RefreshCw, Loader2, AlertTriangle, Zap, ChevronLeft } from "lucide-react";
 import UpgradePrompt from "./UpgradePrompt";
+import PostMigrationOnboarding from "./PostMigrationOnboarding";
 import { ConfirmDialog, AlertDialog } from "./ui/dialog";
 import { useDialogs } from "../hooks/useDialogs";
 import { useHotkey } from "../hooks/useHotkey";
-import { useToast } from "./ui/Toast";
+import { useToast } from "./ui/useToast";
 import { useUpdater } from "../hooks/useUpdater";
 import { useSettings } from "../hooks/useSettings";
 import { useAuth } from "../hooks/useAuth";
@@ -18,12 +19,34 @@ import {
   updateTranscription as updateInStore,
   clearTranscriptions as clearStore,
 } from "../stores/transcriptionStore";
+import { useSettingsStore } from "../stores/settingsStore";
+import {
+  useIsMeetingMode,
+  useIsNarrowWindow,
+  useMeetingRecordingStore,
+} from "../stores/meetingRecordingStore";
 import ControlPanelSidebar, { type ControlPanelView } from "./ControlPanelSidebar";
+import MeetingRecordingMount from "./MeetingRecordingMount";
+import MeetingRecordingPill from "./notes/MeetingRecordingPill";
 import WindowControls from "./WindowControls";
 
 import { getCachedPlatform } from "../utils/platform";
-import { setActiveNoteId, setActiveFolderId } from "../stores/noteStore";
+import { isAccessibilitySkipped } from "../utils/permissions";
+import {
+  setActiveNoteId,
+  setActiveFolderId,
+  useActiveNoteId,
+  initializeNotes,
+} from "../stores/noteStore";
+import { fetchProviders as fetchStreamingProviders } from "../stores/streamingProvidersStore";
 import HistoryView from "./HistoryView";
+import BackgroundActionToastListener from "./notes/BackgroundActionToastListener";
+import { syncService } from "../services/SyncService.js";
+import AcceptInvitationModal, {
+  consumePendingInvitationToken,
+  clearPendingInvitationToken,
+} from "./AcceptInvitationModal";
+import { WORKSPACES_ENABLED } from "../lib/features";
 
 const platform = getCachedPlatform();
 
@@ -33,6 +56,7 @@ const PersonalNotesView = React.lazy(() => import("./notes/PersonalNotesView"));
 const DictionaryView = React.lazy(() => import("./DictionaryView"));
 const UploadAudioView = React.lazy(() => import("./notes/UploadAudioView"));
 const IntegrationsView = React.lazy(() => import("./IntegrationsView"));
+const ChatView = React.lazy(() => import("./chat/ChatView"));
 const CommandSearch = React.lazy(() => import("./CommandSearch"));
 
 export default function ControlPanel() {
@@ -41,6 +65,7 @@ export default function ControlPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
+  const [showPostMigration, setShowPostMigration] = useState(false);
   const [limitData, setLimitData] = useState<{ wordsUsed: number; limit: number } | null>(null);
   const hasShownUpgradePrompt = useRef(false);
   const [settingsSection, setSettingsSection] = useState<string | undefined>();
@@ -48,10 +73,17 @@ export default function ControlPanel() {
     () => localStorage.getItem("aiCTADismissed") === "true"
   );
   const [showReferrals, setShowReferrals] = useState(false);
+  const [invitationToken, setInvitationToken] = useState<string | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [showCloudMigrationBanner, setShowCloudMigrationBanner] = useState(false);
   const [activeView, setActiveView] = useState<ControlPanelView>("home");
-  const [isMeetingMode, setIsMeetingMode] = useState(false);
+  const isMeetingMode = useIsMeetingMode();
+  const isNarrowWindow = useIsNarrowWindow();
+  const activeNoteId = useActiveNoteId();
+  const isSidePanelLayout =
+    isMeetingMode || (isNarrowWindow && activeView === "personal-notes" && activeNoteId != null);
+  const recordingNoteId = useMeetingRecordingStore((s) => s.recordingNoteId);
+  const recordingFolderId = useMeetingRecordingStore((s) => s.recordingFolderId);
   const [meetingRecordingRequest, setMeetingRecordingRequest] = useState<{
     noteId: number;
     folderId: number;
@@ -65,12 +97,14 @@ export default function ControlPanel() {
     () => localStorage.getItem("gpuBannerDismissedUnified") === "true"
   );
   const cloudMigrationProcessed = useRef(false);
+  const updateReadyToastShown = useRef(false);
+  const updateErrorToastShown = useRef<Error | null>(null);
   const { hotkey } = useHotkey();
   const { toast } = useToast();
   const {
     useLocalWhisper,
     localTranscriptionProvider,
-    useReasoningModel,
+    useCleanupModel,
     setUseLocalWhisper,
     setCloudTranscriptionMode,
   } = useSettings();
@@ -97,7 +131,39 @@ export default function ControlPanel() {
   } = useDialogs();
 
   useEffect(() => {
-    loadTranscriptions();
+    (async () => {
+      try {
+        setIsLoading(true);
+        await initializeTranscriptions();
+      } catch {
+        showAlertDialog({
+          title: t("controlPanel.history.couldNotLoadTitle"),
+          description: t("controlPanel.history.couldNotLoadDescription"),
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+  }, [showAlertDialog, t]);
+
+  useEffect(() => {
+    const { noteFilesEnabled, noteFilesPath } = useSettingsStore.getState();
+    if (!noteFilesEnabled) return;
+    window.electronAPI?.noteFilesSetEnabled?.(true, noteFilesPath || undefined, {
+      skipRebuild: true,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (platform !== "darwin") return;
+    window.electronAPI?.getPostMigrationState?.().then((state) => {
+      if (state?.justMigrated) setShowPostMigration(true);
+    });
+  }, []);
+
+  const dismissPostMigrationPermanently = useCallback(async () => {
+    await window.electronAPI?.markBundleMigrated?.();
+    setShowPostMigration(false);
   }, []);
 
   useEffect(() => {
@@ -106,6 +172,9 @@ export default function ControlPanel() {
       if (mod && e.key === "k") {
         e.preventDefault();
         setShowSearch(true);
+      } else if (mod && e.key === ",") {
+        e.preventDefault();
+        setShowSettings(true);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -114,21 +183,30 @@ export default function ControlPanel() {
 
   useEffect(() => {
     if (updateStatus.updateDownloaded && !isDownloading) {
-      toast({
-        title: t("controlPanel.update.readyTitle"),
-        description: t("controlPanel.update.readyDescription"),
-        variant: "success",
-      });
+      if (!updateReadyToastShown.current) {
+        updateReadyToastShown.current = true;
+        toast({
+          title: t("controlPanel.update.readyTitle"),
+          description: t("controlPanel.update.readyDescription"),
+          variant: "success",
+        });
+      }
+    } else {
+      updateReadyToastShown.current = false;
     }
   }, [updateStatus.updateDownloaded, isDownloading, toast, t]);
 
   useEffect(() => {
-    if (updateError) {
+    if (updateError && updateError !== updateErrorToastShown.current) {
+      updateErrorToastShown.current = updateError;
       toast({
         title: t("controlPanel.update.problemTitle"),
         description: t("controlPanel.update.problemDescription"),
         variant: "destructive",
       });
+    }
+    if (!updateError) {
+      updateErrorToastShown.current = null;
     }
   }, [updateError, toast, t]);
 
@@ -167,6 +245,23 @@ export default function ControlPanel() {
   }, [usage?.isPastDue, usage?.hasLoaded, toast, t]);
 
   useEffect(() => {
+    if (!WORKSPACES_ENABLED) return;
+    const unsubscribe = window.electronAPI?.onWorkspaceInvitationToken?.((token) => {
+      setInvitationToken(token);
+    });
+    return () => unsubscribe?.();
+  }, []);
+
+  useEffect(() => {
+    if (!WORKSPACES_ENABLED || !authLoaded || !isSignedIn) return;
+    const pending = consumePendingInvitationToken();
+    if (pending) {
+      setInvitationToken(pending);
+      clearPendingInvitationToken();
+    }
+  }, [authLoaded, isSignedIn]);
+
+  useEffect(() => {
     if (!authLoaded || !isSignedIn || cloudMigrationProcessed.current) return;
     const isPending = localStorage.getItem("pendingCloudMigration") === "true";
     const alreadyShown = localStorage.getItem("cloudMigrationShown") === "true";
@@ -189,7 +284,7 @@ export default function ControlPanel() {
           if (status?.gpuInfo.hasNvidiaGpu && !status.downloaded) results.cuda = true;
         } catch {}
       }
-      if (useReasoningModel) {
+      if (useCleanupModel) {
         try {
           const [gpu, vulkan] = await Promise.all([
             window.electronAPI?.detectVulkanGpu?.(),
@@ -201,22 +296,58 @@ export default function ControlPanel() {
       setGpuAccelAvailable(results);
     };
     detect();
-  }, [useLocalWhisper, localTranscriptionProvider, useReasoningModel, gpuBannerDismissed]);
+  }, [useLocalWhisper, localTranscriptionProvider, useCleanupModel, gpuBannerDismissed]);
 
   useEffect(() => {
-    const cleanup = window.electronAPI?.onNavigateToMeetingNote?.((data) => {
+    const drain = async () => {
+      const data = await window.electronAPI?.getPendingMeetingNoteNavigation?.();
+      if (!data) return;
       setActiveFolderId(data.folderId);
       setActiveNoteId(data.noteId);
       setActiveView("personal-notes");
-      setIsMeetingMode(true);
-      setMeetingRecordingRequest(data);
+      setMeetingRecordingRequest({
+        noteId: data.noteId,
+        folderId: data.folderId,
+        event: data.event,
+      });
+      initializeNotes(null, 50, data.folderId);
+      if (
+        data.trigger === "hotkey" &&
+        useSettingsStore.getState().meetingHotkeyLayoutMode === "side-panel"
+      ) {
+        window.electronAPI?.snapToMeetingMode?.();
+      }
+    };
+    drain();
+    const cleanup = window.electronAPI?.onMeetingNoteNavigationPending?.(drain);
+    return () => cleanup?.();
+  }, []);
+
+  useEffect(() => {
+    const cleanup = window.electronAPI?.onNavigateToNote?.((data) => {
+      if (data.folderId) {
+        setActiveFolderId(data.folderId);
+        initializeNotes(null, 50, data.folderId);
+      }
+      setActiveNoteId(data.noteId);
+      setActiveView("personal-notes");
+    });
+    return () => cleanup?.();
+  }, []);
+
+  useEffect(() => {
+    const cleanup = window.electronAPI?.onShowSettings?.(() => {
+      setShowSettings(true);
     });
     return () => cleanup?.();
   }, []);
 
   // When accessibility is missing on macOS, open the permissions settings page
   useEffect(() => {
-    const cleanup = window.electronAPI?.onAccessibilityMissing?.(() => {
+    const cleanup = window.electronAPI?.onAccessibilityMissing?.(async () => {
+      if (isAccessibilitySkipped()) return;
+      const migration = await window.electronAPI?.getPostMigrationState?.();
+      if (migration?.justMigrated) return;
       setSettingsSection("privacyData");
       setShowSettings(true);
       toast({
@@ -228,29 +359,22 @@ export default function ControlPanel() {
     return () => cleanup?.();
   }, [toast, t]);
 
+  useEffect(() => {
+    syncService.syncAll().catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    fetchStreamingProviders();
+  }, []);
+
   const handleMeetingRecordingRequestHandled = useCallback(
     () => setMeetingRecordingRequest(null),
     []
   );
 
   const handleExitMeetingMode = useCallback(() => {
-    setIsMeetingMode(false);
     window.electronAPI?.restoreFromMeetingMode?.();
   }, []);
-
-  const loadTranscriptions = async () => {
-    try {
-      setIsLoading(true);
-      await initializeTranscriptions();
-    } catch (error) {
-      showAlertDialog({
-        title: t("controlPanel.history.couldNotLoadTitle"),
-        description: t("controlPanel.history.couldNotLoadDescription"),
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const copyToClipboard = useCallback(
     async (text: string) => {
@@ -283,6 +407,7 @@ export default function ControlPanel() {
             const result = await window.electronAPI.deleteTranscription(id);
             if (result.success) {
               removeFromStore(id);
+              syncService.syncAll().catch(console.error);
             } else {
               showAlertDialog({
                 title: t("controlPanel.history.couldNotDeleteTitle"),
@@ -311,6 +436,7 @@ export default function ControlPanel() {
           const result = await window.electronAPI.clearTranscriptions();
           if (result.success) {
             clearStore();
+            syncService.syncAll().catch(console.error);
             toast({
               title: t("controlPanel.history.clearAllSuccess"),
               variant: "success",
@@ -356,26 +482,42 @@ export default function ControlPanel() {
   const retryTranscription = useCallback(
     async (id: number) => {
       try {
-        const result = await window.electronAPI.retryTranscription(id);
+        const s = useSettingsStore.getState();
+        const result = await window.electronAPI.retryTranscription(id, {
+          useLocalWhisper: s.useLocalWhisper,
+          localTranscriptionProvider: s.localTranscriptionProvider,
+          cloudTranscriptionMode: s.cloudTranscriptionMode,
+          cloudTranscriptionProvider: s.cloudTranscriptionProvider,
+          cloudTranscriptionModel: s.cloudTranscriptionModel,
+          cloudTranscriptionBaseUrl: s.cloudTranscriptionBaseUrl,
+          parakeetModel: s.parakeetModel,
+          whisperModel: s.whisperModel,
+          preferredLanguage: s.preferredLanguage,
+          transcriptionMode: s.transcriptionMode,
+          remoteTranscriptionType: s.remoteTranscriptionType,
+          remoteTranscriptionUrl: s.remoteTranscriptionUrl,
+        });
         if (result.success && result.transcription) {
           const rawText = result.transcription.text;
           let finalTranscription = result.transcription;
 
           // Apply AI reasoning if enabled
-          if (useReasoningModel) {
+          if (useCleanupModel) {
             try {
               const [
                 { default: ReasoningService },
-                { getEffectiveReasoningModel, isCloudReasoningMode },
+                { getEffectiveCleanupModel, isCloudCleanupMode, getSettings },
               ] = await Promise.all([
                 import("../services/ReasoningService"),
                 import("../stores/settingsStore"),
               ]);
-              const model = getEffectiveReasoningModel();
-              const isCloud = isCloudReasoningMode();
+              const model = getEffectiveCleanupModel();
+              const isCloud = isCloudCleanupMode();
               if (model || isCloud) {
                 const agentName = localStorage.getItem("agentName") || null;
-                const reasonedText = await ReasoningService.processText(rawText, model, agentName);
+                const reasonedText = await ReasoningService.processText(rawText, model, agentName, {
+                  disableThinking: getSettings().cleanupDisableThinking,
+                });
                 if (reasonedText && reasonedText !== rawText) {
                   const updated = await window.electronAPI.updateTranscriptionText(
                     id,
@@ -408,7 +550,7 @@ export default function ControlPanel() {
         });
       }
     },
-    [toast, t, useReasoningModel]
+    [toast, t, useCleanupModel]
   );
 
   const handleUpdateClick = async () => {
@@ -479,6 +621,16 @@ export default function ControlPanel() {
 
   return (
     <div className="h-screen bg-background flex flex-col">
+      <MeetingRecordingMount />
+      <MeetingRecordingPill
+        activeView={activeView}
+        activeNoteId={activeNoteId}
+        onReturnToNote={() => {
+          setActiveView("personal-notes");
+          setActiveFolderId(recordingFolderId);
+          setActiveNoteId(recordingNoteId);
+        }}
+      />
       <ConfirmDialog
         open={confirmDialog.open}
         onOpenChange={hideConfirmDialog}
@@ -503,6 +655,12 @@ export default function ControlPanel() {
         limit={limitData?.limit}
       />
 
+      <PostMigrationOnboarding
+        open={showPostMigration}
+        onOpenChange={setShowPostMigration}
+        onDone={dismissPostMigrationPermanently}
+      />
+
       {showSettings && (
         <Suspense fallback={null}>
           <SettingsModal
@@ -522,13 +680,25 @@ export default function ControlPanel() {
         </Suspense>
       )}
 
+      {WORKSPACES_ENABLED && (
+        <AcceptInvitationModal
+          token={invitationToken}
+          onClose={() => setInvitationToken(null)}
+          isSignedIn={isSignedIn}
+          onSignIn={() => {
+            setInvitationToken(null);
+          }}
+        />
+      )}
+
       {showSearch && (
         <Suspense fallback={null}>
           <CommandSearch
             open={showSearch}
             onOpenChange={setShowSearch}
             transcriptions={history}
-            onNoteSelect={(id) => {
+            onNoteSelect={(id, folderId) => {
+              if (folderId) setActiveFolderId(folderId);
               setActiveNoteId(id);
               setActiveView("personal-notes");
             }}
@@ -542,7 +712,7 @@ export default function ControlPanel() {
       <div className="flex flex-1 overflow-hidden">
         <div
           className="shrink-0 overflow-hidden transition-[width] duration-300 ease-out"
-          style={{ width: isMeetingMode ? 0 : undefined }}
+          style={{ width: isSidePanelLayout ? 0 : undefined }}
         >
           <ControlPanelSidebar
             activeView={activeView}
@@ -557,7 +727,6 @@ export default function ControlPanel() {
               setSettingsSection("plansBilling");
               setShowSettings(true);
             }}
-            onUpgradeCheckout={() => usage?.openCheckout()}
             isOverLimit={usage?.isOverLimit ?? false}
             userName={user?.name}
             userEmail={user?.email}
@@ -590,7 +759,7 @@ export default function ControlPanel() {
             className="flex items-center justify-between w-full h-10 shrink-0"
             style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
           >
-            {isMeetingMode && (
+            {isSidePanelLayout && (
               <div
                 className={platform === "darwin" ? "ml-[84px] mt-[16px]" : "ml-2"}
                 style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
@@ -602,7 +771,7 @@ export default function ControlPanel() {
                   className="h-7 px-2.5 pl-1.5 gap-1"
                 >
                   <ChevronLeft size={14} strokeWidth={1.8} />
-                  Back to notes
+                  {t("controlPanel.backToNotes")}
                 </Button>
               </div>
             )}
@@ -700,7 +869,7 @@ export default function ControlPanel() {
                 setShowCloudMigrationBanner={setShowCloudMigrationBanner}
                 aiCTADismissed={aiCTADismissed}
                 setAiCTADismissed={setAiCTADismissed}
-                useReasoningModel={useReasoningModel}
+                useCleanupModel={useCleanupModel}
                 copyToClipboard={copyToClipboard}
                 deleteTranscription={deleteTranscription}
                 clearAllTranscriptions={clearAllTranscriptions}
@@ -712,6 +881,11 @@ export default function ControlPanel() {
                 }}
               />
             )}
+            {activeView === "chat" && (
+              <Suspense fallback={null}>
+                <ChatView />
+              </Suspense>
+            )}
             {activeView === "personal-notes" && (
               <Suspense fallback={null}>
                 <PersonalNotesView
@@ -719,9 +893,9 @@ export default function ControlPanel() {
                     setSettingsSection(section);
                     setShowSettings(true);
                   }}
+                  onOpenSearch={() => setShowSearch(true)}
                   meetingRecordingRequest={meetingRecordingRequest}
                   onMeetingRecordingRequestHandled={handleMeetingRecordingRequestHandled}
-                  isMeetingMode={isMeetingMode}
                 />
               </Suspense>
             )}
@@ -747,12 +921,19 @@ export default function ControlPanel() {
             )}
             {activeView === "integrations" && (
               <Suspense fallback={null}>
-                <IntegrationsView />
+                <IntegrationsView
+                  isPaid={!!(usage?.isSubscribed || usage?.isTrial)}
+                  onUpgrade={() => {
+                    setSettingsSection("plansBilling");
+                    setShowSettings(true);
+                  }}
+                />
               </Suspense>
             )}
           </div>
         </main>
       </div>
+      <BackgroundActionToastListener />
     </div>
   );
 }
